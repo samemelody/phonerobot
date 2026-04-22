@@ -1,0 +1,58 @@
+# Exclude all Markdown files except README.md
+*.md
+!README.md
+
+# Also exclude specific documentation files
+*.log
+*.tmp
+
+# Java heap dumps and debugging files
+*.hprof
+hs_err_pid*
+*.heapdump
+
+# Built files
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Files for ART/Dalvik VM
+*.class
+
+# Generated code
+gen/
+out/
+
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Signing
+*.jks
+*.keystore
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.cxx/
+
+# Model files (large binary)
+app/src/main/assets/models/
+*.litertlm
+*.tflite
+*.bin
+
+# Secrets / credentials
+*.env
+credentials.json
+keystore.properties

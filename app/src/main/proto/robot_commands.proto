@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package robot;
+
+// Master message containing a oneof wrapper for all command types
+message RobotCommand {
+  oneof command {
+    DriveCommand drive = 1;
+    SteerCommand steer = 2;
+    StopCommand stop = 3;
+  }
+}
+
+message DriveCommand {
+  // 1 = Forward, -1 = Backward
+  int32 direction = 1; 
+  // Speed from 0 to 255
+  uint32 speed = 2;    
+}
+
+message SteerCommand {
+  // Angle in degrees (0-180)
+  uint32 angle = 1;    
+}
+
+message StopCommand {
+  // Empty message to trigger immediate hardware stop
+}

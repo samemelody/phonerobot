@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="seed">#1976D2</color>
+    <color name="md_theme_light_primary">#0061A4</color>
+    <color name="md_theme_light_onPrimary">#FFFFFF</color>
+    <color name="md_theme_light_primaryContainer">#D1E4FF</color>
+    <color name="md_theme_light_onPrimaryContainer">#001D36</color>
+    <color name="md_theme_light_secondary">#535F70</color>
+    <color name="md_theme_light_onSecondary">#FFFFFF</color>
+    <color name="md_theme_light_primaryFixed">#D1E4FF</color>
+    <color name="md_theme_light_onPrimaryFixed">#001D36</color>
+
+    <color name="md_theme_dark_primary">#9DCAFF</color>
+    <color name="md_theme_dark_onPrimary">#003258</color>
+    <color name="md_theme_dark_primaryContainer">#00497D</color>
+    <color name="md_theme_dark_onPrimaryContainer">#D1E4FF</color>
+
+    <color name="status_ready">#4CAF50</color>
+    <color name="status_loading">#FF9800</color>
+    <color name="status_error">#F44336</color>
+    <color name="control_btn_bg">#E3F2FD</color>
+    <color name="stop_btn_red">#EF5350</color>
+    <color name="chat_user_bg">#BBDEFB</color>
+    <color name="chat_ai_bg">#E8F5E9</color>
+</resources>

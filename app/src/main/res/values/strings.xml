@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PhoneRobot</string>
+
+    <!-- Main screen -->
+    <string name="main_title">PhoneRobot — AI Robot Controller</string>
+    <string name="model_status_label">Model Status</string>
+    <string name="model_status_loading">Loading Gemma 4…</string>
+    <string name="model_status_ready">Gemma 4 Ready</string>
+    <string name="model_status_error">Model Error</string>
+    <string name="input_hint">Ask the robot something…</string>
+    <string name="send_button">Send</string>
+    <string name="voice_button">Voice</string>
+
+    <!-- Control panel -->
+    <string name="control_panel_title">Manual Control</string>
+    <string name="btn_forward">Forward</string>
+    <string name="btn_backward">Backward</string>
+    <string name="btn_left">Left</string>
+    <string name="btn_right">Right</string>
+    <string name="btn_stop">STOP</string>
+    <string name="connection_status">Connection: %s</string>
+    <string name="connection_disconnected">Disconnected</string>
+    <string name="connection_usb">USB</string>
+    <string name="connection_bluetooth">Bluetooth</string>
+
+    <!-- AI response -->
+    <string name="ai_response_title">AI Response</string>
+    <string name="ai_thinking">Thinking…</string>
+    <string name="robot_command_executed">Command executed: %s</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="setting_model_path">Model Path</string>
+    <string name="setting_max_tokens">Max Tokens</string>
+    <string name="setting_temperature">Temperature</string>
+    <string name="setting_device_info">Device Info</string>
+</resources>

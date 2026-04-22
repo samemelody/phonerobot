@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="padding_small">8dp</dimen>
+    <dimen name="padding_medium">16dp</dimen>
+    <dimen name="padding_large">24dp</dimen>
+    <dimen name="text_size_title">22sp</dimen>
+    <dimen name="text_size_body">16sp</dimen>
+    <dimen name="text_size_small">14sp</dimen>
+    <dimen name="control_btn_size">64dp</dimen>
+    <dimen name="control_btn_gap">12dp</dimen>
+    <dimen name="input_min_height">56dp</dimen>
+    <dimen name="avatar_size">40dp</dimen>
+</resources>

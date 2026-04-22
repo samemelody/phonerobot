@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- CDC-ACM devices (USB class 2) — covers STM32 native USB, Arduino Leonardo, etc. -->
+    <usb-device class="2" />
+    <!-- CH340 / CH341 — common on Arduino Nano clones -->
+    <usb-device vendor-id="6790" product-id="29987" />
+    <!-- CP210x — common on ESP32 dev boards -->
+    <usb-device vendor-id="4292" product-id="60000" />
+    <!-- FT232 / FTDI -->
+    <usb-device vendor-id="1027" product-id="24577" />
+    <!-- PL2303 -->
+    <usb-device vendor-id="1659" product-id="8963" />
+</resources>
