@@ -37,6 +37,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,13 +50,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phonerobot.app.ai.ChatMessage
+import com.phonerobot.app.RobotModeActivity
 
 /**
  * Navigation destinations for the bottom nav bar.
  */
 enum class PhoneRobotDestination(val icon: ImageVector, val label: String) {
     CHAT(Icons.Default.Chat, "Chat"),
-    CALL(Icons.Default.Phone, "Call"),
+    ROBOT_MODE(Icons.Default.Mic, "Robot"),
 }
 
 /**
@@ -108,10 +113,8 @@ fun MainScreen(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                PhoneRobotDestination.CALL -> {
-                    CallPanel(
-                        isOnCall = state.isOnCall,
-                        onToggleCall = onCallClick,
+                PhoneRobotDestination.ROBOT_MODE -> {
+                    RobotModePanel(
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -333,18 +336,19 @@ private fun ChatPanel(
     }
 }
 
-// ==================== Call Panel ====================
+// ==================== Robot Mode Panel ====================
 
 /**
- * Voice call panel — reserved for future call module.
- * Shows a big call button and call status.
+ * Robot Mode panel — continuous listening mode.
+ * Launches RobotModeActivity for voice command processing.
  */
 @Composable
-private fun CallPanel(
-    isOnCall: Boolean,
-    onToggleCall: () -> Unit,
+private fun RobotModePanel(
     modifier: Modifier = Modifier,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var isActive by remember { mutableStateOf(false) }
+
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color.White)
@@ -357,27 +361,31 @@ private fun CallPanel(
                 .padding(24.dp)
         ) {
             Text(
-                text = if (isOnCall) "Call in Progress..." else "Ready to Call",
+                text = "Robot Mode",
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (isOnCall) Color(0xFF4CAF50) else Color.DarkGray
+                color = Color(0xFF2196F3)
             )
 
             Spacer(Modifier.height(32.dp))
 
-            // Big call button
+            // Robot mode button
             IconButton(
-                onClick = onToggleCall,
+                onClick = {
+                    context.startActivity(
+                        android.content.Intent(context, RobotModeActivity::class.java)
+                    )
+                },
                 modifier = Modifier
                     .size(80.dp)
                     .background(
-                        if (isOnCall) Color(0xFFF44336) else Color(0xFF4CAF50),
+                        Color(0xFF2196F3),
                         CircleShape
                     )
             ) {
                 Icon(
-                    imageVector = Icons.Default.Phone,
-                    contentDescription = if (isOnCall) "End Call" else "Start Call",
+                    imageVector = Icons.Default.Mic,
+                    contentDescription = "Start Robot Mode",
                     tint = Color.White,
                     modifier = Modifier.size(40.dp)
                 )
@@ -386,7 +394,7 @@ private fun CallPanel(
             Spacer(Modifier.height(16.dp))
 
             Text(
-                text = if (isOnCall) "Tap to end call" else "Tap to start voice call",
+                text = "Tap to start continuous listening",
                 fontSize = 14.sp,
                 color = Color.Gray
             )
@@ -394,9 +402,10 @@ private fun CallPanel(
             Spacer(Modifier.height(24.dp))
 
             Text(
-                text = "Voice call module coming soon.\nRecords user voice and AI responses.",
+                text = "Robot Mode: Continuous listening for voice commands.\nAI processes speech and controls robot.",
                 fontSize = 12.sp,
-                color = Color.Gray
+                color = Color.Gray,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
     }

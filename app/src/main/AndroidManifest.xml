@@ -48,6 +48,10 @@
             android:name=".ui.ScriptEditorActivity"
             android:exported="false"
             android:theme="@style/Theme.PhoneRobot" />
+        <activity
+            android:name=".RobotModeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.PhoneRobot" />
 
     </application>
 
