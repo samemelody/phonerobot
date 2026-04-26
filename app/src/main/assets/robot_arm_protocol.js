@@ -37,7 +37,7 @@ const protocol = {
         const buf = new ArrayBuffer(14);
         const v = new DataView(buf);
         v.setUint8(0, 0x71);  // CMD_MULTI_JOINT_MOVE
-        for (let i = 0; i < 6; i++) {
+        for (var i = 0; i < 6; i++) {
             v.setInt16(1 + i * 2, Math.round(angles[i] * 10), true);
         }
         v.setUint8(13, speed);

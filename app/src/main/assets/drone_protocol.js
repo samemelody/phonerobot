@@ -11,7 +11,9 @@ const protocol = {
      * @param {number} mode - 0=standby arming, 1=auto-arm on takeoff
      * @returns {Uint8Array}
      */
-    packArmRequest: function(mode = 0) {
+    packArmRequest: function(mode) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (mode === undefined) mode = 0;
         if (mode < 0 || mode > 1) throw new Error("mode must be 0 or 1");
         const buf = new ArrayBuffer(2);
         const v = new DataView(buf);
@@ -50,7 +52,9 @@ const protocol = {
      * @param {number} speed - Descent speed (1=slow, 2=normal, 3=fast)
      * @returns {Uint8Array}
      */
-    packLandRequest: function(speed = 2) {
+    packLandRequest: function(speed) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (speed === undefined) speed = 2;
         if (speed < 1 || speed > 3) throw new Error("speed must be 1..3");
         const buf = new ArrayBuffer(2);
         const v = new DataView(buf);
@@ -103,7 +107,9 @@ const protocol = {
      * @param {number} speed   - Rotation speed (1=slow, 2=medium, 3=fast)
      * @returns {Uint8Array}
      */
-    packYawRequest: function(angle, speed = 2) {
+    packYawRequest: function(angle, speed) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (speed === undefined) speed = 2;
         if (angle < -360 || angle > 360) throw new Error("angle must be -360..360");
         if (speed < 1 || speed > 3) throw new Error("speed must be 1..3");
         const buf = new ArrayBuffer(4);

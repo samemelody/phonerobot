@@ -1,20 +1,17 @@
 package com.phonerobot.app.robot
 
 import android.util.Log
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.runBlocking
+import org.mozilla.javascript.*
+import java.io.InputStreamReader
 
 /**
- * QuickJS JavaScript Sandbox for robot protocol execution.
+ * JavaScript Sandbox for robot protocol execution using Rhino.
  *
  * Workflow:
- * 1. loadProtocol(filename) - AI tells sandbox which robot protocol to use
- * 2. executeScript(jsCode) - AI generates JS calling protocol.pack*() functions
- * 3. Binary result is automatically sent via RobotChannel (BT/USB)
- *
- * The sandbox simulates JS execution by parsing protocol.pack*() calls
- * and returning the binary data that the JS would have produced.
- * In a future version, a real QuickJS runtime will replace this.
+ * 1. loadProtocol(filename) - Load JS protocol file into Rhino
+ * 2. executeScript(jsCode) - Execute AI-generated JS code
+ * 3. JS calls protocol.pack*() functions → returns Uint8Array
+ * 4. Binary result is automatically sent via RobotChannel (BT/USB)
  */
 class QuickJSSandbox(
     private val channel: RobotChannel,
@@ -23,26 +20,29 @@ class QuickJSSandbox(
 ) {
     companion object {
         private const val TAG = "QuickJSSandbox"
-        private const val DEFAULT_TIMEOUT_MS = 5000L
         private const val MAX_SCRIPT_LENGTH = 8192
     }
 
+    // Rhino context and scope
+    private var context: Context? = null
+    private var scope: Scriptable? = null
+    private var protocolObject: Scriptable? = null
+
     // State
-    private val isInitialized = AtomicBoolean(false)
-    private var executionCount = 0
-
-    /** Currently loaded protocol template filename, or null if none */
     private var activeProtocol: String? = null
-
-    /** Parsed function definitions from the loaded protocol script */
-    private val protocolFunctions = mutableMapOf<String, ProtocolFunctionDef>()
 
     // ── Lifecycle ─────────────────────────────────────────────
 
     fun initialize(): Boolean {
         return try {
-            isInitialized.set(true)
-            Log.i(TAG, "Sandbox initialized - ready to load protocol")
+            context = Context.enter()
+            context?.optimizationLevel = -1 // -1 for Android compatibility
+            scope = context?.initStandardObjects()
+
+            // Add console object for logging
+            addConsoleObject()
+
+            Log.i(TAG, "Rhino sandbox initialized")
             true
         } catch (e: Exception) {
             Log.e(TAG, "Sandbox init failed", e)
@@ -50,26 +50,98 @@ class QuickJSSandbox(
         }
     }
 
+    /**
+     * Add a console object to the Rhino scope
+     * Supports: console.log(), console.error(), console.warn()
+     */
+    private fun addConsoleObject() {
+        val consoleObj = Context.getCurrentContext().newObject(scope)
+
+        // console.log() function
+        val logFunction = object : BaseFunction() {
+            override fun call(
+                cx: Context?,
+                scope: Scriptable?,
+                thisObj: Scriptable?,
+                args: Array<Any?>?
+            ): Any? {
+                val message = args?.joinToString(" ") { 
+                    if (it is NativeJavaObject) it.unwrap().toString() else it.toString() 
+                } ?: ""
+                Log.i("JS_Console", message)
+                return Undefined.instance
+            }
+        }
+
+        // console.error() function
+        val errorFunction = object : BaseFunction() {
+            override fun call(
+                cx: Context?,
+                scope: Scriptable?,
+                thisObj: Scriptable?,
+                args: Array<Any?>?
+            ): Any? {
+                val message = args?.joinToString(" ") { 
+                    if (it is NativeJavaObject) it.unwrap().toString() else it.toString() 
+                } ?: ""
+                Log.e("JS_Console", message)
+                return Undefined.instance
+            }
+        }
+
+        // console.warn() function
+        val warnFunction = object : BaseFunction() {
+            override fun call(
+                cx: Context?,
+                scope: Scriptable?,
+                thisObj: Scriptable?,
+                args: Array<Any?>?
+            ): Any? {
+                val message = args?.joinToString(" ") { 
+                    if (it is NativeJavaObject) it.unwrap().toString() else it.toString() 
+                } ?: ""
+                Log.w("JS_Console", message)
+                return Undefined.instance
+            }
+        }
+
+        ScriptableObject.putProperty(consoleObj, "log", logFunction)
+        ScriptableObject.putProperty(consoleObj, "error", errorFunction)
+        ScriptableObject.putProperty(consoleObj, "warn", warnFunction)
+
+        scope?.put("console", scope, consoleObj)
+        Log.d(TAG, "Added console object to Rhino scope")
+    }
+
     fun cleanup() {
         activeProtocol = null
-        protocolFunctions.clear()
-        isInitialized.set(false)
-        executionCount = 0
+        protocolObject = null
+
+        try {
+            Context.exit()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error exiting Rhino context", e)
+        }
+
+        context = null
+        scope = null
+
         Log.i(TAG, "Sandbox cleaned up")
     }
 
-    fun isReady(): Boolean = isInitialized.get()
+    fun isReady(): Boolean = context != null && scope != null
 
     // ── Protocol Loading ──────────────────────────────────────
 
     /**
      * Load a protocol template into the sandbox.
-     * Parses the JS file to discover available protocol.pack*() functions.
-     *
-     * @param filename Asset filename (e.g. "rover_protocol.js")
-     * @return Description of loaded protocol and its functions
+     * Executes the JS file in Rhino to get the protocol object.
      */
     fun loadProtocol(filename: String): String {
+        if (!isReady()) {
+            return "Error: Sandbox not initialized"
+        }
+
         val script = scriptManager.loadProtocolScript(filename)
         if (script == null) {
             val err = "Protocol '$filename' not found"
@@ -77,59 +149,64 @@ class QuickJSSandbox(
             return "Error: $err"
         }
 
-        activeProtocol = filename
-        protocolFunctions.clear()
+        return try {
+            // Execute the protocol JS to define the 'protocol' object
+            context?.evaluateString(scope, script, filename, 1, null)
 
-        // Parse function definitions from JS: packXxxRequest: function(param1, param2)
-        val funcRegex = Regex(
-            """pack(\w+)Request\s*:\s*function\s*\(([^)]*)\)"""
-        )
-        funcRegex.findAll(script).forEach { match ->
-            val name = "pack${match.groupValues[1]}Request"
-            val params = match.groupValues[2]
-                .split(",")
-                .map { it.trim().removeSuffix(" = 0").removeSuffix("=0").trim() }
-                .filter { it.isNotEmpty() }
-            protocolFunctions[name] = ProtocolFunctionDef(name, params)
+            // Get the protocol object from the scope
+            val protocol = scope?.get("protocol", scope!!)
+            if (protocol == null || protocol == Scriptable.NOT_FOUND) {
+                "Error: 'protocol' object not defined in $filename"
+            } else {
+                protocolObject = protocol as Scriptable
+
+                activeProtocol = filename
+
+                // Get list of functions from the protocol object
+                val functions = getProtocolFunctionNames()
+                val funcList = functions.joinToString("\n") { "  - protocol.$it()" }
+
+                Log.i(TAG, "Loaded protocol: $filename with ${functions.size} functions")
+                "Loaded: $filename\nAvailable commands:\n$funcList"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading protocol: ${e.message}", e)
+            "Error: ${e.message}"
+        }
+    }
+
+    /**
+     * Get list of function names from the protocol object
+     */
+    private fun getProtocolFunctionNames(): List<String> {
+        val functions = mutableListOf<String>()
+        val ids = protocolObject?.ids
+
+        if (ids is Array<*>) {
+            ids.forEach { id ->
+                if (id is String) {
+                    functions.add(id)
+                }
+            }
         }
 
-        // Also extract JSDoc descriptions
-        val descRegex = Regex(
-            """/\*\*\s*\n\s*\*\s*([^\n]+)\n\s*\*[^*]*pack(\w+)Request"""
-        )
-        descRegex.findAll(script).forEach { match ->
-            val desc = match.groupValues[1].trim()
-            val name = "pack${match.groupValues[2]}Request"
-            protocolFunctions[name]?.description = desc
-        }
-
-        val funcList = protocolFunctions.values.joinToString("\n") { f ->
-            "  - protocol.${f.name}(${f.params.joinToString(", ")})" +
-                (if (f.description.isNotEmpty()) " — ${f.description}" else "")
-        }
-
-        Log.i(TAG, "Loaded protocol: $filename with ${protocolFunctions.size} functions")
-        return "Loaded: $filename\nAvailable commands:\n$funcList"
+        return functions.sorted()
     }
 
     /** Get the currently active protocol filename */
     fun getActiveProtocol(): String? = activeProtocol
 
-    /** Get list of available protocol function names */
-    fun getProtocolFunctions(): List<String> = protocolFunctions.keys.toList()
-
     // ── Script Execution ──────────────────────────────────────
 
     /**
      * Execute JavaScript code in the sandbox.
-     * If the result is binary data (ByteArray), it is automatically sent
-     * through the RobotChannel (Bluetooth/USB).
+     * The JS code should call protocol.pack*() functions.
      *
      * @param javascriptCode AI-generated JS code
-     * @return Execution result description (String)
+     * @return Execution result description (String) or ByteArray for binary data
      */
-    fun executeScript(javascriptCode: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): Any {
-        if (!isInitialized.get()) {
+    fun executeScript(javascriptCode: String): Any {
+        if (!isReady()) {
             return "Error: Sandbox not initialized"
         }
 
@@ -137,29 +214,84 @@ class QuickJSSandbox(
             return "Error: Script too long (${javascriptCode.length} chars)"
         }
 
-        if (activeProtocol == null) {
-            return "Error: No protocol loaded. Call loadProtocol() first."
-        }
-
-        executionCount++
-        val execId = executionCount
-
-        if (enableDetailedLogs) {
-            Log.i(TAG, "Exec #$execId: ${javascriptCode.take(80)}...")
-        }
+        // Rhino Context is thread-local, so we need to enter a context for this thread
+        val threadContext = Context.enter()
+        threadContext.optimizationLevel = -1  // -1 for Android compatibility
 
         return try {
-            val result = executeJavaScriptInternal(javascriptCode, execId)
+            // Use the thread-local context to evaluate the script
+            val result = threadContext.evaluateString(
+                scope,
+                javascriptCode,
+                "AI_Generated_Script",
+                1,
+                null
+            )
 
-            // If binary data was produced, auto-send via channel
-            if (result is ByteArray && result.isNotEmpty()) {
-                sendViaChannel(result, execId)
+            Log.i(TAG, "Executed JS: ${javascriptCode.take(80)}...")
+            Log.d(TAG, "Result type: ${result?.javaClass?.simpleName}")
+
+            // Process the result
+            processExecutionResult(result)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Execution failed: ${e.message}", e)
+            "Error: ${e.message}"
+        } finally {
+            // Always exit the context to avoid thread-local leaks
+            Context.exit()
+        }
+    }
+
+    /**
+     * Process the result of JS execution.
+     * If result is Uint8Array (NativeUint8Array), convert to ByteArray.
+     */
+    private fun processExecutionResult(result: Any?): Any {
+        if (result == null || result == Undefined.instance) {
+            // No return value is OK for console.log() etc.
+            return "Script executed successfully (no return value)"
+        }
+
+        // Check if result is a Uint8Array (Rhino's NativeUint8Array)
+        if (result is NativeArray || result.javaClass.simpleName == "NativeUint8Array") {
+            val byteArray = convertUint8ArrayToByteArray(result)
+            Log.i(TAG, "Got Uint8Array result: ${byteArray.size} bytes")
+
+            // Auto-send via channel
+            if (byteArray.isNotEmpty()) {
+                sendViaChannel(byteArray)
             }
 
-            result
+            return byteArray
+        }
+
+        // If result is a number, string, etc.
+        return result.toString()
+    }
+
+    /**
+     * Convert Rhino's NativeUint8Array to Kotlin ByteArray
+     */
+    private fun convertUint8ArrayToByteArray(uint8Array: Any): ByteArray {
+        return try {
+            // Rhino's NativeUint8Array can be accessed via Scriptable
+            val scriptable = uint8Array as Scriptable
+            val length = ScriptableObject.getProperty(scriptable, "length") as Number
+            val size = length.toInt()
+
+            val bytes = ByteArray(size)
+            for (i in 0 until size) {
+                val value = ScriptableObject.getProperty(scriptable, i)
+                bytes[i] = when (value) {
+                    is Number -> value.toByte()
+                    else -> 0
+                }
+            }
+            bytes
         } catch (e: Exception) {
-            Log.e(TAG, "Exec #$execId failed: ${e.message}", e)
-            "Error: ${e.message}"
+            Log.e(TAG, "Error converting Uint8Array", e)
+            byteArrayOf()
         }
     }
 
@@ -175,291 +307,124 @@ class QuickJSSandbox(
         }
     }
 
-    // ── Internal Execution ────────────────────────────────────
-
-    /**
-     * Simulated JS execution: parses protocol.pack*() calls from the code
-     * and generates binary data matching what the JS would produce.
-     *
-     * This works by:
-     * 1. Finding protocol.packXxxRequest(...) calls in the JS code
-     * 2. Extracting the numeric arguments
-     * 3. Building a binary packet: [1B cmd][params as per protocol convention]
-     *
-     * When real QuickJS is integrated, this will be replaced with actual
-     * JS evaluation that returns Uint8Array from the protocol object.
-     */
-    private fun executeJavaScriptInternal(code: String, execId: Int): Any {
-        // Find the first protocol.pack*() call in the code
-        val callRegex = Regex("""protocol\.(pack\w+Request)\s*\(([^)]*)\)""")
-        val match = callRegex.find(code)
-
-        if (match == null) {
-            Log.w(TAG, "Exec #$execId: No protocol.pack*() call found in code")
-            return "Error: No protocol command found. Use protocol.packXxxRequest() syntax."
-        }
-
-        val funcName = match.groupValues[1]
-        val argsStr = match.groupValues[2]
-
-        // Verify function exists in loaded protocol
-        val funcDef = protocolFunctions[funcName]
-        if (funcDef == null) {
-            val available = protocolFunctions.keys.joinToString(", ")
-            return "Error: Unknown function '$funcName'. Available: $available"
-        }
-
-        // Parse arguments
-        val args = parseArguments(argsStr)
-        if (args.size < funcDef.params.size) {
-            // Some params may have defaults; allow fewer args
-            Log.d(TAG, "Exec #$execId: $funcName called with ${args.size} args (expects ${funcDef.params.size})")
-        }
-
-        // Generate binary data from the call
-        val binaryData = generateBinaryPacket(funcName, args)
-
-        if (enableDetailedLogs) {
-            val hex = binaryData.joinToString(" ") { "%02X".format(it) }
-            Log.i(TAG, "Exec #$execId: $funcName(${args.joinToString(", ")}) → ${binaryData.size}B [$hex]")
-        }
-
-        return binaryData
-    }
-
-    /**
-     * Parse comma-separated numeric arguments from JS code.
-     * Handles: integers, negative numbers, floats, simple expressions like "angle * 10"
-     */
-    private fun parseArguments(argsStr: String): List<Double> {
-        if (argsStr.isBlank()) return emptyList()
-
-        return argsStr.split(",").mapNotNull { arg ->
-            val trimmed = arg.trim()
-            // Try to evaluate simple numeric expressions
-            // Strip Math.round() wrapper if present
-            val cleaned = trimmed
-                .replace(Regex("""Math\.round\(([^)]+)\)""")) { it.groupValues[1] }
-                .replace(Regex("""\s*\*\s*\d+"""), "")  // strip "* 10" resolution scaling
-
-            cleaned.toDoubleOrNull()
-        }
-    }
-
-    /**
-     * Generate binary packet from a protocol function call.
-     * Uses the JS protocol template convention:
-     * - First byte: command ID from the JS (setUint8(0, 0xNN))
-     * - Remaining bytes: parameters packed per the JS DataView calls
-     *
-     * Since we don't have a real JS runtime, we reconstruct the binary
-     * by re-reading the JS protocol script and matching the pack function.
-     */
-    private fun generateBinaryPacket(funcName: String, args: List<Double>): ByteArray {
-        val script = scriptManager.loadProtocolScript(activeProtocol!!)
-            ?: return byteArrayOf()
-
-        // Extract the command byte (0xNN) from setUint8(0, 0xNN)
-        val cmdByteRegex = Regex(
-            """pack\w+Request[^}]*?setUint8\(0,\s*(0x[0-9A-Fa-f]+|\d+)"""
-        )
-        val cmdMatch = cmdByteRegex.find(script)
-        // We need to find the right one for this specific function
-        // Look for the command byte within the specific function body
-
-        // Simpler approach: find the function body, then extract the cmd byte
-        val funcBodyRegex = Regex(
-            """$funcName\s*:\s*function[^{]*\{([\s\S]*?)\n\s*\},"""
-        )
-        val funcBodyMatch = funcBodyRegex.find(script)
-        val funcBody = funcBodyMatch?.groupValues?.get(1) ?: ""
-
-        // Extract command byte
-        val cmdRegex = Regex("""setUint8\(0,\s*(0x[0-9A-Fa-f]+|\d+)\)""")
-        val cmdMatch2 = cmdRegex.find(funcBody)
-        val cmdByte = if (cmdMatch2 != null) {
-            val raw = cmdMatch2.groupValues[1]
-            if (raw.startsWith("0x", ignoreCase = true)) raw.removePrefix("0x").removePrefix("0X").toInt(16).toByte()
-            else raw.toInt().toByte()
-        } else {
-            0x00.toByte()
-        }
-
-        // Now build the packet by mimicking what the JS DataView writes
-        // We'll collect all setUint8/setInt8/setUint16/setInt16/setFloat32 calls
-        val writes = mutableListOf<ByteWrite>()
-        val writeRegex = Regex(
-            """(setUint8|setInt8|setUint16|setInt16|setFloat32)\((\d+),\s*([^)]+)\)"""
-        )
-        writeRegex.findAll(funcBody).forEach { wMatch ->
-            val method = wMatch.groupValues[1]
-            val offset = wMatch.groupValues[2].toInt()
-            val valueExpr = wMatch.groupValues[3].trim()
-            writes.add(ByteWrite(method, offset, valueExpr))
-        }
-
-        // Sort by offset and build the byte array
-        if (writes.isEmpty()) return byteArrayOf(cmdByte)
-
-        val maxOffset = writes.maxOf { w ->
-            w.offset + when (w.method) {
-                "setUint8", "setInt8" -> 1
-                "setUint16", "setInt16" -> 2
-                "setFloat32" -> 4
-                else -> 1
-            }
-        }
-
-        val buffer = ByteArray(maxOffset)
-        writes.forEach { w ->
-            val value = evaluateValueExpr(w.valueExpr, args)
-            when (w.method) {
-                "setUint8" -> buffer[w.offset] = value.toInt().toByte()
-                "setInt8" -> buffer[w.offset] = value.toInt().toByte()
-                "setUint16" -> {
-                    val v = value.toInt()
-                    buffer[w.offset] = (v and 0xFF).toByte()
-                    buffer[w.offset + 1] = ((v shr 8) and 0xFF).toByte()
-                }
-                "setInt16" -> {
-                    val v = value.toInt()
-                    buffer[w.offset] = (v and 0xFF).toByte()
-                    buffer[w.offset + 1] = ((v shr 8) and 0xFF).toByte()
-                }
-                "setFloat32" -> {
-                    val bits = java.lang.Float.floatToIntBits(value.toFloat())
-                    buffer[w.offset] = (bits and 0xFF).toByte()
-                    buffer[w.offset + 1] = ((bits shr 8) and 0xFF).toByte()
-                    buffer[w.offset + 2] = ((bits shr 16) and 0xFF).toByte()
-                    buffer[w.offset + 3] = ((bits shr 24) and 0xFF).toByte()
-                }
-            }
-        }
-
-        return buffer
-    }
-
-    /**
-     * Evaluate a value expression from the JS protocol script.
-     * Replaces parameter references with actual arg values and computes the result.
-     */
-    private fun evaluateValueExpr(expr: String, args: List<Double>): Double {
-        var result = expr
-
-        // Replace common JS expressions
-        // "speed" → args[0], "angle" → args[0] or args[1], etc.
-        val paramNames = listOf(
-            "speed", "leftSpeed", "rightSpeed", "angle", "time", "duration",
-            "altitude", "lat", "lng", "tolerance", "patrolId", "loops",
-            "brakeTime", "mode", "resolution", "patrolId", "vx", "vy", "vz",
-            "yawRate", "roll", "pitch", "yaw", "action", "steps", "stepLength",
-            "direction", "count", "hand", "pattern", "arms", "poseId", "programId",
-            "stepIndex", "dwellMs", "jointId", "position", "force", "x", "y", "z",
-            "pan", "tilt"
-        )
-
-        // Map parameter names to argument indices
-        var argIdx = 0
-        paramNames.forEach { name ->
-            if (result.contains(name)) {
-                val value = if (argIdx < args.size) args[argIdx] else 0.0
-                result = result.replace(name, value.toString())
-                argIdx++
-            }
-        }
-
-        // Handle Math.round(xxx * 10)
-        result = result.replace(Regex("""Math\.round\(([^)]+)\)""")) { match ->
-            // Simple eval of the inner expression
-            try {
-                Math.round(evaluateSimpleExpr(match.groupValues[1])).toString()
-            } catch (e: Exception) { "0" }
-        }
-
-        // Handle bit shifts: (xxx & 0xFFFF), (xxx >> 16)
-        result = result.replace(Regex("""\(([^)]+)\s*&\s*0xFFFF\)""")) { match ->
-            try { (evaluateSimpleExpr(match.groupValues[1]).toInt() and 0xFFFF).toString() }
-            catch (e: Exception) { "0" }
-        }
-        result = result.replace(Regex("""\(([^)]+)\s*>>\s*(\d+)\)""")) { match ->
-            try { (evaluateSimpleExpr(match.groupValues[1]).toInt() shr match.groupValues[2].toInt()).toString() }
-            catch (e: Exception) { "0" }
-        }
-
-        // Try to evaluate the final expression
-        return try {
-            evaluateSimpleExpr(result)
-        } catch (e: Exception) {
-            0.0
-        }
-    }
-
-    /** Evaluate simple arithmetic expressions (numbers, +, -, *, /) */
-    private fun evaluateSimpleExpr(expr: String): Double {
-        val cleaned = expr.trim()
-            .replace(Regex("""0x([0-9A-Fa-f]+)""")) { it.groupValues[1].toInt(16).toString() }
-
-        // Very simple: if it's just a number, return it
-        return cleaned.trim().toDoubleOrNull() ?: 0.0
-    }
-
     // ── Channel Send ──────────────────────────────────────────
 
     /**
      * Send binary protocol data through the robot channel (BT/USB).
-     * Always logs the rawdata hex regardless of connection status.
      */
-    private fun sendViaChannel(data: ByteArray, execId: Int) {
+    private fun sendViaChannel(data: ByteArray) {
         val hex = data.joinToString(" ") { "%02X".format(it) }
 
-        // Always log the rawdata — useful for testing without hardware
-        Log.i(TAG, ">>> RAWDATA #$execId: [${data.size}B] $hex")
+        // Always log the rawdata
+        Log.i(TAG, ">>> RAWDATA: [${data.size}B] $hex")
 
         if (!channel.isConnected()) {
-            Log.w(TAG, ">>> RAWDATA #$execId: Channel NOT connected - data NOT sent to robot (but logged above)")
+            Log.w(TAG, ">>> RAWDATA: Channel NOT connected - data NOT sent to robot (but logged above)")
             return
         }
 
-        Thread {
-            try {
-                val command = RobotCommand.RawData(data)
-                val success = runBlocking { channel.send(command) }
-                if (success) {
-                    Log.i(TAG, ">>> RAWDATA #$execId: Sent ${data.size}B via channel OK")
-                } else {
-                    Log.e(TAG, ">>> RAWDATA #$execId: Channel send FAILED")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, ">>> RAWDATA #$execId: Channel send exception", e)
+        try {
+            val command = RobotCommand.RawData(data)
+            val success = kotlinx.coroutines.runBlocking { channel.send(command) }
+            if (success) {
+                Log.i(TAG, ">>> RAWDATA: Sent ${data.size}B via channel OK")
+            } else {
+                Log.e(TAG, ">>> RAWDATA: Channel send FAILED")
             }
-        }.start()
+        } catch (e: Exception) {
+            Log.e(TAG, ">>> RAWDATA: Channel send exception", e)
+        }
     }
 
     // ── Status ────────────────────────────────────────────────
 
     fun getSandboxStatus(): String {
         return buildString {
-            append("Sandbox: ${if (isInitialized.get()) "Ready" else "Not initialized"}\n")
+            append("Sandbox: ${if (isReady()) "Ready (Rhino)" else "Not initialized"}\n")
             append("Protocol: ${activeProtocol ?: "None loaded"}\n")
-            append("Functions: ${protocolFunctions.size}\n")
-            append("Executions: $executionCount\n")
             append("Channel: ${if (channel.isConnected()) "Connected" else "Disconnected"}")
         }
     }
+
+    // ── Testing ────────────────────────────────────────
+
+    /**
+     * Test the sandbox with a simple command.
+     * Call this to verify the sandbox is working correctly.
+     *
+     * @return Test results as a formatted string
+     */
+    fun testSandbox(): String {
+        val results = StringBuilder()
+        results.append("=== JS Sandbox Test ===\n\n")
+
+        Log.i(TAG, "========== JS SANDBOX TEST START ==========")
+
+        // Test 1: Initialize
+        results.append("1. Initializing sandbox...\n")
+        val initOk = initialize()
+        results.append("   Result: ${if (initOk) "✓ OK" else "✗ FAILED"}\n\n")
+
+        Log.i(TAG, "Test 1 - Initialize: ${if (initOk) "OK" else "FAILED"}")
+
+        if (!initOk) {
+            results.append("Cannot continue - sandbox init failed")
+            Log.e(TAG, "Test FAILED: Sandbox init failed")
+            Log.i(TAG, "========== JS SANDBOX TEST END ==========")
+            return results.toString()
+        }
+
+        // Test 2: Load protocol
+        results.append("2. Loading protocol: rover_protocol.js...\n")
+        val loadResult = loadProtocol("rover_protocol.js")
+        results.append("   Result: $loadResult\n\n")
+
+        Log.i(TAG, "Test 2 - Load protocol: $loadResult")
+
+        if (activeProtocol == null) {
+            results.append("Cannot continue - protocol load failed")
+            cleanup()
+            Log.e(TAG, "Test FAILED: Protocol load failed")
+            Log.i(TAG, "========== JS SANDBOX TEST END ==========")
+            return results.toString()
+        }
+
+        // Test 3: Execute a simple command
+        results.append("3. Executing: protocol.packStopRequest()...\n")
+        val execResult = executeScript("return protocol.packStopRequest();")
+        results.append("   Result: $execResult\n")
+        results.append("   Type: ${execResult.javaClass.simpleName}\n\n")
+
+        Log.i(TAG, "Test 3 - Execute stop: result type = ${execResult.javaClass.simpleName}")
+        if (execResult is ByteArray) {
+            val hex = execResult.joinToString(" ") { "%02X".format(it) }
+            results.append("   ✓ Got ByteArray (${execResult.size} bytes)\n")
+            results.append("   Hex: $hex\n\n")
+            Log.i(TAG, "Test 3 - Got ${execResult.size} bytes: $hex")
+        }
+
+        // Test 4: Execute drive command
+        results.append("4. Executing: protocol.packDriveRequest(100, 0, 50)...\n")
+        val driveResult = executeScript("return protocol.packDriveRequest(100, 0, 50);")
+        results.append("   Result: $driveResult\n")
+        results.append("   Type: ${driveResult.javaClass.simpleName}\n\n")
+
+        Log.i(TAG, "Test 4 - Execute drive: result type = ${driveResult.javaClass.simpleName}")
+        if (driveResult is ByteArray) {
+            val hex = driveResult.joinToString(" ") { "%02X".format(it) }
+            results.append("   ✓ Got ByteArray (${driveResult.size} bytes)\n")
+            results.append("   Hex: $hex\n\n")
+            Log.i(TAG, "Test 4 - Got ${driveResult.size} bytes: $hex")
+        }
+
+        // Cleanup
+        cleanup()
+        results.append("5. Cleanup complete\n")
+        results.append("\n=== Test Complete ===\n")
+
+        Log.i(TAG, "Test 5 - Cleanup complete")
+        Log.i(TAG, "========== JS SANDBOX TEST END ==========")
+
+        return results.toString()
+    }
 }
-
-// ── Data classes ──────────────────────────────────────────────
-
-/** Parsed protocol function definition */
-data class ProtocolFunctionDef(
-    val name: String,
-    val params: List<String>,
-    var description: String = ""
-)
-
-/** Represents a DataView write operation from the JS protocol script */
-data class ByteWrite(
-    val method: String,  // setUint8, setInt16, etc.
-    val offset: Int,
-    val valueExpr: String
-)

@@ -85,8 +85,8 @@ dependencies {
     // LiteRT-LM — on-device language model inference (Gemma 4 etc.)
     implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
 
-    // QuickJS JavaScript Engine
-    implementation("app.cash.quickjs:quickjs-android:0.9.2")
+    // Rhino JavaScript Engine (pure Java, no native code)
+    implementation("org.mozilla:rhino:1.7.15")
 
     // USB Serial — supports CDC-ACM, CH340, CP210x, FTDI, etc.
     implementation("com.github.mik3y:usb-serial-for-android:3.10.0")

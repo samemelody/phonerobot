@@ -17,6 +17,7 @@ import com.phonerobot.app.ai.ChatMessage
 import com.phonerobot.app.ai.GemmaConfig
 import com.phonerobot.app.ai.GemmaService
 import com.phonerobot.app.ai.FlexibleJavaScriptTool
+import com.phonerobot.app.ai.GeneralTools
 import com.phonerobot.app.audio.AudioProcessor
 import com.phonerobot.app.audio.AudioRecorder
 import com.phonerobot.app.ui.MainScreen
@@ -222,6 +223,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             try {
                 val flexibleJsTool = FlexibleJavaScriptTool(jsSandbox, scriptManager)
+                val generalTools = GeneralTools()
 
                 val success = gemmaService.initialize(
                     config = GemmaConfig(
@@ -229,7 +231,7 @@ class MainActivity : ComponentActivity() {
                         topK = 40,
                         topP = 0.9f,
                     ),
-                    toolSets = listOf(flexibleJsTool),
+                    toolSets = listOf(flexibleJsTool, generalTools),
                 )
 
                 if (success) {
@@ -252,6 +254,12 @@ class MainActivity : ComponentActivity() {
         val input = state.uiState.currentInput.trim()
         if (input.isBlank()) return
 
+        // Check for test command
+        if (input.equals("test sandbox", ignoreCase = true)) {
+            testSandbox()
+            return
+        }
+
         if (!::gemmaService.isInitialized || !gemmaService.isReady) {
             addMessage(ChatMessage.Role.ASSISTANT, "Model is not ready yet. Please wait...")
             return
@@ -268,6 +276,31 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Inference error", e)
                 addMessage(ChatMessage.Role.ASSISTANT, "Error: ${e.message}")
+            } finally {
+                state.update { it.copy(isAiThinking = false) }
+            }
+        }
+    }
+
+    /**
+     * Test the JS sandbox and display results
+     */
+    private fun testSandbox() {
+        state.update { it.copy(currentInput = "", isAiThinking = true) }
+        addMessage(ChatMessage.Role.USER, "[Test JS Sandbox]")
+
+        lifecycleScope.launch {
+            try {
+                val results = jsSandbox.testSandbox()
+                Log.i(TAG, "=== SANDBOX TEST RESULTS ===")
+                Log.i(TAG, results)
+                Log.i(TAG, "=== END TEST RESULTS ===")
+
+                addMessage(ChatMessage.Role.SYSTEM, "Sandbox test complete. Check logcat for details.")
+                addMessage(ChatMessage.Role.ASSISTANT, results)
+            } catch (e: Exception) {
+                Log.e(TAG, "Sandbox test failed", e)
+                addMessage(ChatMessage.Role.ASSISTANT, "Test failed: ${e.message}")
             } finally {
                 state.update { it.copy(isAiThinking = false) }
             }

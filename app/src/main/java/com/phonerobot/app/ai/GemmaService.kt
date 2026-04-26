@@ -96,29 +96,32 @@ class GemmaService(private val context: Context) {
 
                 // System prompt for robot protocol control
                 val systemPrompt = buildString {
-                    append("You are an AI that controls robots via Bluetooth/USB. Keep responses concise.\n\n")
-                    append("WORKFLOW:\n")
-                    append("1. When the user tells you what robot they control, call loadProtocol(filename)\n")
-                    append("2. loadProtocol returns the available commands — remember them\n")
-                    append("3. When the user gives a command (e.g. 'go', 'stop', 'turn left'), call executeJavaScript() with the right protocol function\n")
-                    append("4. Binary data is auto-sent to the robot via BT/USB\n\n")
-                    append("Example:\n")
-                    append("  User: 'You are driving a toy car'\n")
-                    append("  You: → loadProtocol('toy_car_protocol_core.js')\n")
-                    append("  User: 'Go forward'\n")
-                    append("  You: → executeJavaScript('return protocol.packForwardRequest(50, 1000);')\n")
-                    append("  User: 'Stop!'\n")
-                    append("  You: → executeJavaScript('return protocol.packStopRequest();')\n\n")
-                    append("Robot types: toy_car_protocol_core.js (car), rover_protocol.js (UGV), drone_protocol.js (UAV), robot_arm_protocol.js (arm), bipedal_robot_protocol.js (humanoid).\n")
-                    append("If unsure which protocol to use, call listProtocols(). If unsure about a function's parameters, call readProtocol().\n\n")
-                    append("PROTOCOL DEBUGGING & REWRITING:\n")
-                    append("If a command fails or produces unexpected results:\n")
-                    append("1. Call readProtocol(filename) to examine the script\n")
-                    append("2. Identify the issue (wrong command byte, byte order, offset, etc.)\n")
-                    append("3. Call writeProtocol(new_filename, content) with the corrected script — choose a descriptive name\n")
-                    append("4. Call loadProtocol(new_filename) to load the new version\n")
-                    append("5. Retry the command with executeJavaScript()\n")
-                    append("The original protocol is preserved, so you can compare both versions.")
+                    append("You are an AI assistant that controls robots. Be direct and action-oriented.\n\n")
+                    append("CORE PRINCIPLE: Execute commands immediately when the user gives clear instructions. Don't ask questions unless critical information is missing.\n\n")
+                    append("WHEN TO USE TOOLS:\n")
+                    append("- If user gives a robot command (move, turn, stop, grab, etc.) → call executeJavaScript() immediately\n")
+                    append("- If you need to know which protocol to use, assume 'rover_protocol.js' (most common) and execute\n")
+                    append("- If user asks a general question (not a command) → respond conversationally without tools\n\n")
+                    append("PROTVCOL USAGE:\n")
+                    append("- Default protocol: 'rover_protocol.js' (UGV/rover)\n")
+                    append("- Available: rover_protocol.js (UGV), toy_car_protocol_core.js (car), drone_protocol.js (UAV), robot_arm_protocol.js (arm), bipedal_robot_protocol.js (humanoid)\n")
+                    append("- Only call loadProtocol() if you're unsure which protocol to use\n\n")
+                    append("EXECUTION PATTERN:\n")
+                    append("  User: 'Move forward 2 meters'\n")
+                    append("  You: [call executeJavaScript('return protocol.packDriveRequest(200, 0, 100);')] → 'Moving forward 2 meters'\n\n")
+                    append("  User: 'Turn left'\n")
+                    append("  You: [call executeJavaScript('return protocol.packRotateRequest(-90, 100);')] → 'Turning left 90 degrees'\n\n")
+                    append("  User: 'What's the weather?' (not a robot command)\n")
+                    append("  You: 'I don't have weather data, but I can control your robot!'\n\n")
+                    append("RESPONSE STYLE:\n")
+                    append("- Keep responses under 2 sentences\n")
+                    append("- Execute first, explain briefly after\n")
+                    append("- Don't ask 'What robot are you using?' — just execute with default protocol\n")
+                    append("- If execution fails, THEN ask for clarification\n\n")
+                    append("DEBUGGING (only if command fails):\n")
+                    append("- Call readProtocol() to check syntax\n")
+                    append("- Call writeProtocol() to fix errors\n")
+                    append("- User can also create custom protocols — call listProtocols() to see all available")
                 }
 
                 // Convert ToolSet list to ToolProvider list
@@ -164,6 +167,11 @@ class GemmaService(private val context: Context) {
             val startMs = System.currentTimeMillis()
 
             try {
+                // Log user input
+                Log.i(TAG, "========== USER INPUT ==========")
+                Log.i(TAG, userPrompt)
+                Log.i(TAG, "========== END USER INPUT ==========")
+
                 val response: Message = conversation!!.sendMessage(userPrompt)
                 val outputText = extractText(response)
 
@@ -174,7 +182,12 @@ class GemmaService(private val context: Context) {
                     latencyMs = latency
                 )
 
-                Log.d(TAG, "Inference done in ${latency}ms -> ${result.text}")
+                // Log AI output
+                Log.i(TAG, "========== AI OUTPUT ==========")
+                Log.i(TAG, result.text)
+                Log.i(TAG, "========== END AI OUTPUT ==========")
+                Log.d(TAG, "Inference done in ${latency}ms")
+
                 result
 
             } catch (e: Exception) {
@@ -209,6 +222,11 @@ class GemmaService(private val context: Context) {
             val startMs = System.currentTimeMillis()
 
             try {
+                // Log audio input
+                Log.i(TAG, "========== USER AUDIO INPUT ==========")
+                Log.i(TAG, "Audio file: ${audioFile.absolutePath} (${audioFile.length()} bytes)")
+                Log.i(TAG, "========== END USER AUDIO INPUT ==========")
+
                 val audioContent = Contents.of(Content.AudioFile(audioFile.absolutePath))
                 val response: Message = conversation!!.sendMessage(audioContent)
                 val outputText = extractText(response)
@@ -220,7 +238,12 @@ class GemmaService(private val context: Context) {
                     latencyMs = latency
                 )
 
-                Log.d(TAG, "Audio inference done in ${latency}ms -> ${result.text}")
+                // Log AI output
+                Log.i(TAG, "========== AI OUTPUT (from audio) ==========")
+                Log.i(TAG, result.text)
+                Log.i(TAG, "========== END AI OUTPUT ==========")
+                Log.d(TAG, "Audio inference done in ${latency}ms")
+
                 result
 
             } catch (e: Exception) {
@@ -249,6 +272,11 @@ class GemmaService(private val context: Context) {
         val startMs = System.currentTimeMillis()
         val fullText = StringBuilder()
 
+        // Log user input
+        Log.i(TAG, "========== USER INPUT (async) ==========")
+        Log.i(TAG, userPrompt)
+        Log.i(TAG, "========== END USER INPUT (async) ==========")
+
         scope.launch {
             try {
                 conversation!!.sendMessageAsync(userPrompt)
@@ -269,7 +297,13 @@ class GemmaService(private val context: Context) {
                     tokenCount = estimateTokenCount(fullText.toString()),
                     latencyMs = latency
                 )
-                Log.d(TAG, "Streaming inference done in ${latency}ms -> ${result.text}")
+
+                // Log AI output
+                Log.i(TAG, "========== AI OUTPUT (async) ==========")
+                Log.i(TAG, result.text)
+                Log.i(TAG, "========== END AI OUTPUT (async) ==========")
+                Log.d(TAG, "Streaming inference done in ${latency}ms")
+
                 onComplete(result)
 
             } catch (e: Exception) {

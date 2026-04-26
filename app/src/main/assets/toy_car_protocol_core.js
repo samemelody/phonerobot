@@ -9,7 +9,7 @@ const protocol = {
      * @returns {Uint8Array} Binary command data
      */
     packForwardRequest: function(speed, time) {
-        console.log(`Protocol: Forward request - speed=${speed}%, time=${time}ms`);
+        console.log("Protocol: Forward request - speed=" + speed + "%, time=" + time + "ms");
         
         // Validate parameters
         if (speed < 0 || speed > 100) throw new Error("Speed must be 0-100");
@@ -31,8 +31,10 @@ const protocol = {
      * @param {number} brakeTime - Brake time in milliseconds (0-5000, 0 for immediate)
      * @returns {Uint8Array} Binary command data
      */
-    packStopRequest: function(brakeTime = 0) {
-        console.log(`Protocol: Stop request - brakeTime=${brakeTime}ms`);
+    packStopRequest: function(brakeTime) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (brakeTime === undefined) brakeTime = 0;
+        console.log("Protocol: Stop request - brakeTime=" + brakeTime + "ms");
         
         if (brakeTime < 0 || brakeTime > 5000) throw new Error("Brake time must be 0-5000ms");
         
@@ -51,7 +53,7 @@ const protocol = {
      * @returns {Uint8Array} Binary command data
      */
     packTurnRequest: function(speed, angle) {
-        console.log(`Protocol: Turn request - speed=${speed}%, angle=${angle}°`);
+        console.log("Protocol: Turn request - speed=" + speed + "%, angle=" + angle + "°");
         
         if (speed < 0 || speed > 100) throw new Error("Speed must be 0-100");
         if (angle < -90 || angle > 90) throw new Error("Angle must be -90 to 90 degrees");

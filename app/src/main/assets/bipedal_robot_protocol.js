@@ -13,7 +13,10 @@ const protocol = {
      * @param {number} stepLength - Step length in cm (5-30)
      * @returns {Uint8Array}
      */
-    packWalkRequest: function(steps, speed = 2, stepLength = 15) {
+    packWalkRequest: function(steps, speed, stepLength) {
+        // Handle default parameters (Rhino doesn't support ES6 default params)
+        if (speed === undefined) speed = 2;
+        if (stepLength === undefined) stepLength = 15;
         if (steps < 0 || steps > 20) throw new Error("steps must be 0..20");
         if (speed < 1 || speed > 3) throw new Error("speed must be 1..3");
         if (stepLength < 5 || stepLength > 30) throw new Error("stepLength must be 5..30cm");
@@ -32,7 +35,9 @@ const protocol = {
      * @param {number} speed - Turn speed (1-3)
      * @returns {Uint8Array}
      */
-    packTurnRequest: function(angle, speed = 2) {
+    packTurnRequest: function(angle, speed) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (speed === undefined) speed = 2;
         if (angle < -180 || angle > 180) throw new Error("angle must be -180..180");
         if (speed < 1 || speed > 3) throw new Error("speed must be 1..3");
         const buf = new ArrayBuffer(4);
@@ -120,7 +125,10 @@ const protocol = {
      * @param {number} pattern - 0=simple wave, 1=enthusiastic, 2=royal
      * @returns {Uint8Array}
      */
-    packWaveRequest: function(hand = 1, pattern = 0) {
+    packWaveRequest: function(hand, pattern) {
+        // Handle default parameters (Rhino doesn't support ES6 default params)
+        if (hand === undefined) hand = 1;
+        if (pattern === undefined) pattern = 0;
         if (hand !== 0 && hand !== 1) throw new Error("hand must be 0 or 1");
         if (pattern < 0 || pattern > 2) throw new Error("pattern must be 0..2");
         const buf = new ArrayBuffer(3);
@@ -136,7 +144,9 @@ const protocol = {
      * @param {number} angle - Bow angle in degrees (15-45)
      * @returns {Uint8Array}
      */
-    packBowRequest: function(angle = 30) {
+    packBowRequest: function(angle) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (angle === undefined) angle = 30;
         if (angle < 15 || angle > 45) throw new Error("angle must be 15..45");
         const buf = new ArrayBuffer(2);
         const v = new DataView(buf);
@@ -151,7 +161,9 @@ const protocol = {
      * @param {number} count   - Number of repetitions (1-5)
      * @returns {Uint8Array}
      */
-    packHeadGestureRequest: function(gesture, count = 1) {
+    packHeadGestureRequest: function(gesture, count) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (count === undefined) count = 1;
         if (gesture !== 0 && gesture !== 1) throw new Error("gesture must be 0 or 1");
         if (count < 1 || count > 5) throw new Error("count must be 1..5");
         const buf = new ArrayBuffer(3);
@@ -167,7 +179,9 @@ const protocol = {
      * @param {number} arms - 0=left only, 1=right only, 2=both arms
      * @returns {Uint8Array}
      */
-    packCelebrateRequest: function(arms = 2) {
+    packCelebrateRequest: function(arms) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (arms === undefined) arms = 2;
         if (arms < 0 || arms > 2) throw new Error("arms must be 0..2");
         const buf = new ArrayBuffer(2);
         const v = new DataView(buf);

@@ -10,14 +10,14 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Manages JavaScript scripts stored in internal storage.
+ * Manages JavaScript scripts stored in external storage.
  * Provides CRUD operations for script files and protocol template management.
  */
 class JsScriptManager(private val context: Context) {
     companion object {
         private const val TAG = "JsScriptManager"
-        private const val SCRIPTS_DIR = "scripts"
-        private const val PROTOCOL_DIR = "protocol"
+        private const val SCRIPTS_DIR = "PhoneRobot/scripts"
+        private const val PROTOCOL_DIR = "PhoneRobot/protocol"
 
         /** All protocol template assets bundled with the app */
         val PROTOCOL_TEMPLATES = listOf(
@@ -30,16 +30,45 @@ class JsScriptManager(private val context: Context) {
     }
 
     /**
+     * Get the external storage directory for scripts
+     * Falls back to internal storage if external is not available
+     */
+    private fun getScriptsDir(): File {
+        val externalDir = context.getExternalFilesDir(null)
+        return if (externalDir != null) {
+            File(externalDir, SCRIPTS_DIR)
+        } else {
+            File(context.filesDir, SCRIPTS_DIR)
+        }
+    }
+
+    /**
+     * Get the external storage directory for protocols
+     */
+    private fun getProtocolDir(): File {
+        val externalDir = context.getExternalFilesDir(null)
+        return if (externalDir != null) {
+            File(externalDir, PROTOCOL_DIR)
+        } else {
+            File(context.filesDir, PROTOCOL_DIR)
+        }
+    }
+
+    /**
      * Initialize storage directories and copy protocol templates from assets.
      */
     fun initializeStorage() {
-        val scriptsDir = File(context.filesDir, SCRIPTS_DIR)
-        val protocolDir = File(context.filesDir, PROTOCOL_DIR)
+        val scriptsDir = getScriptsDir()
+        val protocolDir = getProtocolDir()
 
         if (!scriptsDir.exists()) scriptsDir.mkdirs()
         if (!protocolDir.exists()) protocolDir.mkdirs()
 
-        // Copy all protocol templates to internal storage if not already present
+        // Log the storage locations
+        Log.i(TAG, "Scripts directory: ${scriptsDir.absolutePath}")
+        Log.i(TAG, "Protocol directory: ${protocolDir.absolutePath}")
+
+        // Copy all protocol templates to external storage if not already present
         PROTOCOL_TEMPLATES.forEach { (assetName, _) ->
             val destFile = File(protocolDir, assetName)
             if (!destFile.exists()) {
@@ -52,15 +81,17 @@ class JsScriptManager(private val context: Context) {
     // ── Script CRUD ───────────────────────────────────────────
 
     /**
-     * Save JS script to internal storage
+     * Save JS script to external storage
      * @param content JS code content
      * @param name Optional script name, will generate timestamp-based name if null
      * @return File path of saved script
      */
     fun saveScript(content: String, name: String? = null): File {
-        val scriptsDir = File(context.filesDir, SCRIPTS_DIR)
+        val scriptsDir = getScriptsDir()
         val fileName = name ?: generateScriptFileName("script")
         val scriptFile = File(scriptsDir, "${fileName}.js")
+
+        Log.i(TAG, "Saving script to: ${scriptFile.absolutePath}")
 
         FileOutputStream(scriptFile).use { fos ->
             fos.write(content.toByteArray())
@@ -75,7 +106,7 @@ class JsScriptManager(private val context: Context) {
      * @return Script content as string, or null if not found
      */
     fun loadScript(fileName: String): String? {
-        val scriptFile = File(File(context.filesDir, SCRIPTS_DIR), "${fileName}.js")
+        val scriptFile = File(getScriptsDir(), "${fileName}.js")
         return if (scriptFile.exists()) {
             FileInputStream(scriptFile).use { fis -> String(fis.readBytes()) }
         } else {
@@ -88,7 +119,7 @@ class JsScriptManager(private val context: Context) {
      * @return List of script file names (without .js extension)
      */
     fun listScripts(): List<String> {
-        val scriptsDir = File(context.filesDir, SCRIPTS_DIR)
+        val scriptsDir = getScriptsDir()
         return if (scriptsDir.exists()) {
             scriptsDir.listFiles { file -> file.extension == "js" }
                 ?.map { it.nameWithoutExtension } ?: emptyList()
@@ -103,7 +134,7 @@ class JsScriptManager(private val context: Context) {
      * @return True if successful
      */
     fun deleteScript(fileName: String): Boolean {
-        val scriptFile = File(File(context.filesDir, SCRIPTS_DIR), "${fileName}.js")
+        val scriptFile = File(getScriptsDir(), "${fileName}.js")
         return scriptFile.delete()
     }
 
@@ -115,8 +146,9 @@ class JsScriptManager(private val context: Context) {
      * @return Protocol JS content, or null if not found
      */
     fun loadProtocolScript(protocolFileName: String = "toy_car_protocol_core.js"): String? {
-        val protocolFile = File(File(context.filesDir, PROTOCOL_DIR), protocolFileName)
+        val protocolFile = File(getProtocolDir(), protocolFileName)
         return if (protocolFile.exists()) {
+            Log.d(TAG, "Loading protocol from: ${protocolFile.absolutePath}")
             FileInputStream(protocolFile).use { fis -> String(fis.readBytes()) }
         } else {
             // Fallback: try reading directly from assets
@@ -142,7 +174,7 @@ class JsScriptManager(private val context: Context) {
      * @return List of protocol filenames (e.g. ["rover_protocol.js", "drone_protocol.js"])
      */
     fun listInstalledProtocols(): List<String> {
-        val protocolDir = File(context.filesDir, PROTOCOL_DIR)
+        val protocolDir = getProtocolDir()
         return if (protocolDir.exists()) {
             protocolDir.listFiles { file -> file.extension == "js" }
                 ?.map { it.name } ?: emptyList()
@@ -159,7 +191,7 @@ class JsScriptManager(private val context: Context) {
      * @return true if saved successfully, false if file exists or write failed
      */
     fun saveProtocolScript(protocolFileName: String, content: String): Boolean {
-        val protocolDir = File(context.filesDir, PROTOCOL_DIR)
+        val protocolDir = getProtocolDir()
         if (!protocolDir.exists()) protocolDir.mkdirs()
         val protocolFile = File(protocolDir, protocolFileName)
 
@@ -167,6 +199,8 @@ class JsScriptManager(private val context: Context) {
             Log.w(TAG, "Protocol file already exists, will not overwrite: $protocolFileName")
             return false
         }
+
+        Log.i(TAG, "Saving protocol to: ${protocolFile.absolutePath}")
 
         return try {
             FileOutputStream(protocolFile).use { fos ->

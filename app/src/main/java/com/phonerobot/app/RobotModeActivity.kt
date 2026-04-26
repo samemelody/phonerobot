@@ -9,16 +9,18 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.phonerobot.app.ai.GemmaService
 import com.phonerobot.app.audio.VoiceActivityDetector
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
 
 /**
- * Robot Mode Activity - Continuous listening mode.
- * Listens for speech, detects commands, sends to AI.
+ * Robot Mode Activity - Continuous listening with VAD.
+ * Uses single AudioRecord → VAD detects speech → records to WAV → sends to AI.
  */
 class RobotModeActivity : ComponentActivity() {
 
@@ -26,11 +28,23 @@ class RobotModeActivity : ComponentActivity() {
         private const val TAG = "RobotModeActivity"
         private const val REQUEST_RECORD_AUDIO = 1001
         private const val SAMPLE_RATE = 16000
+        private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
+        private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
     }
 
+    // Get GemmaService from Application (singleton - model loaded only once)
+    private val gemmaService: GemmaService
+        get() = (application as PhoneRobotApplication).gemmaService
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    // Single AudioRecord instance (shared between VAD and recording)
     private var audioRecord: AudioRecord? = null
-    private var isRobotModeActive = false
+    private var isActive = false
+
+    // Recording buffer (accumulates audio during speech)
+    private var recordingBuffer = mutableListOf<Byte>()
+    private var isRecordingSpeech = false
 
     // UI elements
     private lateinit var statusText: android.widget.TextView
@@ -40,15 +54,16 @@ class RobotModeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_robot_mode) // You'll need to create this layout
+        setContentView(R.layout.activity_robot_mode)
 
+        // Initialize UI
         statusText = findViewById(R.id.status_text)
         lastCommandText = findViewById(R.id.last_command_text)
         aiResponseText = findViewById(R.id.ai_response_text)
         startButton = findViewById(R.id.start_button)
 
         startButton.setOnClickListener {
-            if (isRobotModeActive) {
+            if (isActive) {
                 stopRobotMode()
             } else {
                 startRobotMode()
@@ -66,17 +81,23 @@ class RobotModeActivity : ComponentActivity() {
             return
         }
 
-        isRobotModeActive = true
+        if (!gemmaService.isReady) {
+            updateStatus("AI model not ready")
+            return
+        }
+
+        isActive = true
         updateStatus("Listening...")
         startButton.text = "Stop"
 
         scope.launch(Dispatchers.IO) {
-            startContinuousListening()
+            startVadRecording()
         }
     }
 
     private fun stopRobotMode() {
-        isRobotModeActive = false
+        isActive = false
+        isRecordingSpeech = false
         try {
             audioRecord?.stop()
             audioRecord?.release()
@@ -88,79 +109,168 @@ class RobotModeActivity : ComponentActivity() {
         startButton.text = "Start"
     }
 
-    private suspend fun startContinuousListening() {
-        val vad = VoiceActivityDetector()
+    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
+    private suspend fun startVadRecording() {
         val bufferSize = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
+            CHANNEL_CONFIG,
+            AUDIO_FORMAT
         ) * 2
+
+        val vad = VoiceActivityDetector(
+            sampleRate = SAMPLE_RATE,
+            energyThreshold = 0.01f,
+            speechStartFrames = 2,
+            speechEndFrames = 15
+        )
 
         try {
             audioRecord = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
                 bufferSize
             )
 
             audioRecord?.startRecording()
-
             val buffer = ByteArray(bufferSize)
-            var isRecordingCommand = false
-            val commandAudio = mutableListOf<Byte>()
+            recordingBuffer.clear()
 
-            while (isRobotModeActive) {
+            while (isActive && isActive) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: break
                 if (read > 0) {
                     val isSpeech = vad.processAudio(buffer.copyOfRange(0, read))
 
-                    if (isSpeech && !isRecordingCommand) {
-                        // Speech started
-                        isRecordingCommand = true
-                        commandAudio.clear()
-                        commandAudio.addAll(buffer.copyOfRange(0, read).toList())
+                    if (isSpeech && !isRecordingSpeech) {
+                        // Speech started → start buffering
+                        isRecordingSpeech = true
+                        recordingBuffer.clear()
+                        recordingBuffer.addAll(buffer.copyOfRange(0, read).toList())
                         withContext(Dispatchers.Main) {
-                            updateStatus("Recording command...")
+                            updateStatus("Recording speech...")
                         }
-                    } else if (isSpeech && isRecordingCommand) {
-                        // Continuing speech
-                        commandAudio.addAll(buffer.copyOfRange(0, read).toList())
-                    } else if (!isSpeech && isRecordingCommand) {
-                        // Speech ended
-                        isRecordingCommand = false
-                        val commandBytes = commandAudio.toByteArray()
-                        
+                    } else if (isSpeech && isRecordingSpeech) {
+                        // Continuing speech → keep buffering
+                        recordingBuffer.addAll(buffer.copyOfRange(0, read).toList())
+                    } else if (!isSpeech && isRecordingSpeech) {
+                        // Speech ended → save to WAV and send to AI
+                        isRecordingSpeech = false
+                        val audioFile = saveBufferToWav(recordingBuffer)
+                        recordingBuffer.clear()
+
                         withContext(Dispatchers.Main) {
-                            lastCommandText.text = "Voice command detected (${commandBytes.size} bytes)"
-                            updateStatus("Processing...")
+                            if (audioFile != null) {
+                                lastCommandText.text = "Speech: ${audioFile.name} (${audioFile.length()} bytes)"
+                                updateStatus("Processing with AI...")
+                            }
                         }
-                        
-                        processWithAI("Voice command detected")
-                        commandAudio.clear()
+
+                        if (audioFile != null) {
+                            processAudioWithAI(audioFile)
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            updateStatus("Listening...")
+                        }
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error in continuous listening", e)
+            Log.e(TAG, "Error in VAD recording", e)
             withContext(Dispatchers.Main) {
                 updateStatus("Error: ${e.message}")
             }
         } finally {
-            audioRecord?.stop()
-            audioRecord?.release()
+            try {
+                audioRecord?.stop()
+                audioRecord?.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing AudioRecord", e)
+            }
             audioRecord = null
         }
     }
 
-    private suspend fun processWithAI(command: String) {
-        // For now, just simulate AI processing
-        delay(500) // Simulate processing time
-        
-        withContext(Dispatchers.Main) {
-            aiResponseText.text = "Command received: $command"
-            updateStatus("Listening...")
+    private fun saveBufferToWav(buffer: List<Byte>): File? {
+        if (buffer.size < 44) return null  // Too small
+
+        return try {
+            val file = File.createTempFile("robot_mode_", ".wav", cacheDir)
+            FileOutputStream(file).use { fos ->
+                writeWavHeader(fos, buffer.size)
+                fos.write(buffer.toByteArray())
+                fos.flush()
+            }
+            file
+        } catch (e: Exception) {
+            Log.e(TAG, "Error saving WAV", e)
+            null
+        }
+    }
+
+    private fun writeWavHeader(out: FileOutputStream, dataSize: Int) {
+        val totalDataLen = dataSize + 36
+        val byteRate = SAMPLE_RATE * 1 * 16 / 8
+
+        val header = ByteArray(44)
+        // RIFF
+        header[0] = 'R'.code.toByte(); header[1] = 'I'.code.toByte()
+        header[2] = 'F'.code.toByte(); header[3] = 'F'.code.toByte()
+        // Chunk size
+        header[4] = (totalDataLen and 0xff).toByte()
+        header[5] = ((totalDataLen shr 8) and 0xff).toByte()
+        header[6] = ((totalDataLen shr 16) and 0xff).toByte()
+        header[7] = ((totalDataLen shr 24) and 0xff).toByte()
+        // WAVE
+        header[8] = 'W'.code.toByte(); header[9] = 'A'.code.toByte()
+        header[10] = 'V'.code.toByte(); header[11] = 'E'.code.toByte()
+        // fmt
+        header[12] = 'f'.code.toByte(); header[13] = 'm'.code.toByte()
+        header[14] = 't'.code.toByte(); header[15] = ' '.code.toByte()
+        // Subchunk1 size (16 for PCM)
+        header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0
+        // Audio format (1 = PCM)
+        header[20] = 1; header[21] = 0
+        // Channels
+        header[22] = 1; header[23] = 0
+        // Sample rate
+        header[24] = (SAMPLE_RATE and 0xff).toByte()
+        header[25] = ((SAMPLE_RATE shr 8) and 0xff).toByte()
+        header[26] = ((SAMPLE_RATE shr 16) and 0xff).toByte()
+        header[27] = ((SAMPLE_RATE shr 24) and 0xff).toByte()
+        // Byte rate
+        header[28] = (byteRate and 0xff).toByte()
+        header[29] = ((byteRate shr 8) and 0xff).toByte()
+        header[30] = ((byteRate shr 16) and 0xff).toByte()
+        header[31] = ((byteRate shr 24) and 0xff).toByte()
+        // Block align
+        header[32] = (1 * 16 / 8).toByte(); header[33] = 0
+        // Bits per sample
+        header[34] = 16; header[35] = 0
+        // data
+        header[36] = 'd'.code.toByte(); header[37] = 'a'.code.toByte()
+        header[38] = 't'.code.toByte(); header[39] = 'a'.code.toByte()
+        // Subchunk2 size
+        header[40] = (dataSize and 0xff).toByte()
+        header[41] = ((dataSize shr 8) and 0xff).toByte()
+        header[42] = ((dataSize shr 16) and 0xff).toByte()
+        header[43] = ((dataSize shr 24) and 0xff).toByte()
+
+        out.write(header)
+    }
+
+    private suspend fun processAudioWithAI(audioFile: File) {
+        try {
+            val result = gemmaService.generateFromAudio(audioFile)
+            withContext(Dispatchers.Main) {
+                aiResponseText.text = "AI: ${result.text}"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error processing audio with AI", e)
+            withContext(Dispatchers.Main) {
+                aiResponseText.text = "Error: ${e.message}"
+            }
         }
     }
 

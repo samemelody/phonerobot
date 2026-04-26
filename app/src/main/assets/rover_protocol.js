@@ -122,10 +122,12 @@ const protocol = {
 
     /**
      * Request a photo capture from onboard camera
-     * @param {number} resolution - 0=QVGA, 1=VGA, 2=1080p
+     * @param {number} resolution - 0=QVGA, 1=VGA, 2=1080p (default: 1)
      * @returns {Uint8Array}
      */
-    packPhotoCaptureRequest: function(resolution = 1) {
+    packPhotoCaptureRequest: function(resolution) {
+        // Handle default parameter (Rhino doesn't support ES6 default params)
+        if (resolution === undefined) resolution = 1;
         if (resolution < 0 || resolution > 2) throw new Error("resolution must be 0..2");
         const buf = new ArrayBuffer(2);
         const v = new DataView(buf);
