@@ -69,7 +69,10 @@ var protocol = globalProtocol;
 return protocol.packForwardRequest(50, 1000);
         """.trimIndent()
         
-        val fileName = "generated_${System.currentTimeMillis()}"
+        // Generate timestamp-based filename (human readable)
+        val dateFormat = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+        val timestamp = dateFormat.format(java.util.Date())
+        val fileName = "script_$timestamp"
         scriptManager.saveScript(template, fileName)
         loadScripts()
     }
@@ -80,6 +83,7 @@ return protocol.packForwardRequest(50, 1000);
         startActivity(intent)
     }
 
+    
     /**
      * Adapter for script list RecyclerView
      */

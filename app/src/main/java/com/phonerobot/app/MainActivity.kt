@@ -218,7 +218,8 @@ class MainActivity : ComponentActivity() {
         Log.i(TAG, "loadModel: starting model loading with tools")
         state.update { it.copy(modelStatus = ModelStatus.Loading) }
 
-        gemmaService = GemmaService(applicationContext)
+        // Use the singleton from PhoneRobotApplication
+        gemmaService = (application as PhoneRobotApplication).gemmaService
 
         lifecycleScope.launch {
             try {
