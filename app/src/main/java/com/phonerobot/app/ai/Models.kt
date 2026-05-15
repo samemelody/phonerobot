@@ -30,7 +30,13 @@ data class GemmaConfig(
     val topP: Float = 0.9f,
     val useGpu: Boolean = true,
     val supportsAudio: Boolean = true,  // Gemma 4 supports audio input
+    val promptVariant: PromptVariant = PromptVariant.FULL,
 )
+
+enum class PromptVariant {
+    FULL,
+    COMPACT,
+}
 
 /**
  * Result of a single inference call.
