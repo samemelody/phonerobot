@@ -37,6 +37,10 @@ data class PhoneRobotUiState(
     // USB connection
     val usbStatus: String = "Disconnected",
 
+    // BLE connection
+    val bleStatus: String = "Disconnected",
+    val bleScanResults: List<Pair<String, String>> = emptyList(),  // (name, address)
+
     // Settings
     val showSettings: Boolean = false,
 )

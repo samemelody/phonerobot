@@ -17,12 +17,18 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Usb
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,6 +80,9 @@ fun MainScreen(
     onVoiceClicked: () -> Unit,
     onCallClick: () -> Unit,
     onConnectUsb: () -> Unit = {},
+    onScanBle: () -> Unit = {},
+    onConnectBle: (String) -> Unit = {},
+    onDisconnectBle: () -> Unit = {},
 ) {
     Scaffold(
         bottomBar = {
@@ -94,8 +103,14 @@ fun MainScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // -- USB Status Bar --
-            UsbStatusBar(usbStatus = state.usbStatus, onConnect = onConnectUsb)
+            // -- BLE Status Bar (primary) --
+            BleStatusBar(
+                bleStatus = state.bleStatus,
+                scanResults = state.bleScanResults,
+                onScan = onScanBle,
+                onConnect = onConnectBle,
+                onDisconnect = onDisconnectBle,
+            )
 
             Spacer(Modifier.height(12.dp))
 
@@ -197,6 +212,156 @@ private fun ModelStatusBar(status: ModelStatus) {
                     else -> Color.DarkGray
                 }
             )
+        }
+    }
+}
+
+// ==================== BLE Status Bar ====================
+
+/**
+ * Shows BLE connection status, scan button, and discovered devices.
+ */
+@Composable
+private fun BleStatusBar(
+    bleStatus: String,
+    scanResults: List<Pair<String, String>>,
+    onScan: () -> Unit,
+    onConnect: (String) -> Unit,
+    onDisconnect: () -> Unit = {},
+) {
+    val isConnected = bleStatus.equals("Connected", ignoreCase = true)
+    val isScanning = bleStatus.equals("Scanning...", ignoreCase = true)
+    var showDeviceList by remember { mutableStateOf(false) }
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                isConnected -> Color(0xFFE3F2FD)
+                bleStatus.contains("fail", ignoreCase = true) -> Color(0xFFFFEBEE)
+                isScanning -> Color(0xFFFFF3E0)
+                scanResults.isNotEmpty() -> Color(0xFFE8F5E9)
+                else -> Color(0xFFF5F5F5)
+            }
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isScanning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = Color(0xFFFF9800)
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Bluetooth,
+                        contentDescription = "BLE",
+                        tint = when {
+                            isConnected -> Color(0xFF1976D2)
+                            else -> Color.Gray
+                        },
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Text(
+                    text = when {
+                        isScanning -> "BLE: Scanning..."
+                        isConnected -> "BLE: Connected"
+                        scanResults.isNotEmpty() -> "BLE: ${scanResults.size} device(s) found"
+                        else -> "BLE: $bleStatus"
+                    },
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 8.dp),
+                    color = when {
+                        isConnected -> Color(0xFF1565C0)
+                        bleStatus.contains("fail", ignoreCase = true) -> Color(0xFFD32F2F)
+                        else -> Color.DarkGray
+                    }
+                )
+            }
+
+            Row {
+                // Show device list button (when results available and not connected)
+                if (scanResults.isNotEmpty() && !isConnected && !isScanning) {
+                    Box {
+                        TextButton(onClick = { showDeviceList = true }) {
+                            Text("Select", fontSize = 12.sp)
+                        }
+                        DropdownMenu(
+                            expanded = showDeviceList,
+                            onDismissRequest = { showDeviceList = false }
+                        ) {
+                            scanResults.forEach { (name, address) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(name, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                                            Text(address, fontSize = 11.sp, color = Color.Gray)
+                                        }
+                                    },
+                                    onClick = {
+                                        showDeviceList = false
+                                        onConnect(address)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Disconnect button (when connected)
+                if (isConnected) {
+                    Button(
+                        onClick = onDisconnect,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFE53935)
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 12.dp, vertical = 4.dp
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.Stop,
+                            contentDescription = "Disconnect",
+                            modifier = Modifier.size(14.dp),
+                            tint = Color.White
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Disconnect", fontSize = 12.sp, color = Color.White)
+                    }
+                }
+
+                // Scan button (when not connected)
+                if (!isConnected) {
+                    Button(
+                        onClick = onScan,
+                        enabled = !isScanning,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF1976D2)
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 12.dp, vertical = 4.dp
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = "Scan",
+                            modifier = Modifier.size(14.dp),
+                            tint = Color.White
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Scan", fontSize = 12.sp, color = Color.White)
+                    }
+                }
+            }
         }
     }
 }

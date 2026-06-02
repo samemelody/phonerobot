@@ -1,0 +1,29 @@
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:generateDebugRFile UP-TO-DATE
+
+> Task :app:compileDebugKotlin
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/RobotModeActivity.kt:297:18 This declaration overrides a deprecated member but is not marked as deprecated itself. Add the '@Deprecated' annotation or suppress the diagnostic.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/RobotModeActivity.kt:302:15 'fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray): Unit' is deprecated. This method has been deprecated in favor of using the Activity Result API
+      which brings increased type safety via an {@link ActivityResultContract} and the prebuilt
+      contracts for common intents available in
+      {@link androidx.activity.result.contract.ActivityResultContracts}, provides hooks for
+      testing, and allow receiving results in separate, testable classes independent from your
+      activity. Use
+      {@link #registerForActivityResult(ActivityResultContract, ActivityResultCallback)} passing
+      in a {@link RequestMultiplePermissions} object for the {@link ActivityResultContract} and
+      handling the result in the {@link ActivityResultCallback#onActivityResult(Object) callback}.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/robot/BleRobotChannel.kt:123:26 'var value: ByteArray!' is deprecated. Deprecated in Java.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/robot/BleRobotChannel.kt:126:40 'fun writeCharacteristic(p0: BluetoothGattCharacteristic!): Boolean' is deprecated. Deprecated in Java.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/robot/BleRobotChannel.kt:478:36 'var value: ByteArray!' is deprecated. Deprecated in Java.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/robot/BleRobotChannel.kt:479:30 'fun writeDescriptor(p0: BluetoothGattDescriptor!): Boolean' is deprecated. Deprecated in Java.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/robot/BleRobotChannel.kt:509:39 'var value: ByteArray!' is deprecated. Deprecated in Java.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/ui/MainScreen.kt:65:24 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
+w: file:///D:/workspace/workbuddy/phonerobot/android-app/app/src/main/java/com/phonerobot/app/ui/MainScreen.kt:474:53 'val Icons.Filled.Send: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Send.
+
+BUILD SUCCESSFUL in 4s
+6 actionable tasks: 1 executed, 5 up-to-date
