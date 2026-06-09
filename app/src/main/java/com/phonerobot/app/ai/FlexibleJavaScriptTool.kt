@@ -6,6 +6,7 @@ import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
 import com.phonerobot.app.robot.JsScriptManager
 import com.phonerobot.app.robot.QuickJSSandbox
+import org.mozilla.javascript.Context
 
 /**
  * AI tool for robot protocol control.
@@ -56,13 +57,46 @@ class FlexibleJavaScriptTool(
     fun executeJavaScript(
         @ToolParam(description = "JavaScript code using protocol functions. Examples: 'return protocol.packDriveRequest(200, 0, 100);' for forward movement, 'return protocol.packRotateRequest(-90, 100);' for left turn, 'return protocol.packStopRequest();' for stop. Check loaded protocol for exact function names and parameters.") jsCode: String
     ): String {
+        Log.i("FlexibleJS", "=== executeJavaScript START ===")
+        Log.i("FlexibleJS", "Input JS code (${jsCode.length} chars): $jsCode")
+        Log.i("FlexibleJS", "Sandbox ready: ${jsSandbox.isReady()}, Active protocol: ${jsSandbox.getActiveProtocol()}")
+
+        if (!jsSandbox.isReady()) {
+            val err = "✗ Sandbox not initialized — cannot execute JS. Try calling loadProtocol() first."
+            Log.e("FlexibleJS", err)
+            return err
+        }
+
+        if (jsSandbox.getActiveProtocol() == null) {
+            val warn = "⚠ No protocol loaded — JS may fail if it references 'protocol' object. Call loadProtocol() first."
+            Log.w("FlexibleJS", warn)
+        }
+
         val result = jsSandbox.executeScript(jsCode)
+
+        Log.i("FlexibleJS", "Result type: ${result?.javaClass?.simpleName}")
+        Log.i("FlexibleJS", "Result value: ${result.toString().take(200)}")
+
         return when (result) {
             is ByteArray -> {
                 val hex = result.joinToString(" ") { "%02X".format(it) }
+                Log.i("FlexibleJS", "✓ ByteArray result: ${result.size} bytes [$hex]")
                 "✓ Sent ${result.size} bytes to robot: [$hex]"
             }
-            else -> result.toString()
+            is String -> {
+                if (result.startsWith("Error:")) {
+                    Log.e("FlexibleJS", "✗ Execution FAILED: $result")
+                    Log.e("FlexibleJS", "Failed JS code was: $jsCode")
+                    "✗ $result\nHint: Call loadProtocol() first, then use readProtocol() to check available function names."
+                } else {
+                    Log.i("FlexibleJS", "Result: $result")
+                    result
+                }
+            }
+            else -> {
+                Log.i("FlexibleJS", "Result: $result")
+                result.toString()
+            }
         }
     }
 
@@ -77,12 +111,36 @@ class FlexibleJavaScriptTool(
     @Tool(description = "ONLY call this if you need to FIX a broken protocol. Writes a corrected version (original is preserved). After writing, you MUST call loadProtocol() with the new filename. DO NOT call this for normal operation.")
     fun writeProtocol(
         @ToolParam(description = "Filename for the fixed protocol, e.g. 'fixed_rover.js'. Choose a descriptive name that indicates what was fixed.") filename: String,
-        @ToolParam(description = "Complete protocol script in JavaScript. Must define 'protocol' object with pack*Request functions using DataView for binary packing. Include the FULL script, not just the fixed function. Use readProtocol() first to see the current script.") content: String
+        @ToolParam(description = "Complete protocol script in JavaScript. Must define 'protocol' object with pack* functions using Uint8Array or DataView for binary packing. Include the FULL script, not just the fixed function. Use readProtocol() first to see the current script. IMPORTANT: Use 'var' not 'const'/'let' (Rhino ES5 only).") content: String
     ): String {
         // Validate that the content looks like a protocol script
-        if (!content.contains("pack") || !content.contains("Request") || !content.contains("DataView")) {
+        if (!content.contains("protocol") || !content.contains("pack")) {
             return "Error: Content does not appear to be a valid protocol script. " +
-                "It must contain pack*Request functions with DataView binary packing."
+                "It must define a 'protocol' object with pack* functions."
+        }
+
+        // Check for ES6 syntax that Rhino doesn't support
+        val es6Issues = mutableListOf<String>()
+        if (content.contains(Regex("""\bconst\b"""))) es6Issues.add("'const' (use 'var')")
+        if (content.contains(Regex("""\blet\b"""))) es6Issues.add("'let' (use 'var')")
+        if (content.contains("=>")) es6Issues.add("arrow functions (use function(){})")
+        if (content.contains("`")) es6Issues.add("template literals (use string concatenation)")
+        if (es6Issues.isNotEmpty()) {
+            return "Error: Script uses ES6 syntax not supported by Rhino: ${es6Issues.joinToString(", ")}. " +
+                "Please rewrite using ES5 syntax only."
+        }
+
+        // Validate JS syntax with Rhino
+        try {
+            val cx = Context.enter()
+            cx.optimizationLevel = -1
+            try {
+                cx.compileString(content, filename, 1, null)
+            } finally {
+                Context.exit()
+            }
+        } catch (e: Exception) {
+            return "Error: JavaScript syntax error — ${e.message}. Fix the syntax and try again."
         }
 
         // Ensure filename ends with .js
@@ -93,7 +151,20 @@ class FlexibleJavaScriptTool(
             "Protocol '$normalizedName' saved successfully (${content.length} chars). " +
                 "Call loadProtocol('$normalizedName') to use it."
         } else {
-            "Error: Failed to save protocol '$normalizedName'. File may already exist — use a different filename."
+            "Error: Failed to save protocol '$normalizedName'. File may already exist — use a different filename or call deleteProtocol() first."
+        }
+    }
+
+    @Tool(description = "Delete a user-created protocol file. Use this to remove broken or unwanted protocols. CANNOT delete built-in templates. After deleting, you can re-create with writeProtocol() if needed.")
+    fun deleteProtocol(
+        @ToolParam(description = "Protocol filename to delete, e.g. 'toy_car_protocol_fixed.js'. Only user-created files can be deleted.") filename: String
+    ): String {
+        val normalizedName = if (filename.endsWith(".js")) filename else "${filename}.js"
+        val deleted = scriptManager.deleteProtocol(normalizedName)
+        return if (deleted) {
+            "Deleted protocol '$normalizedName'. You can now recreate it if needed."
+        } else {
+            "Failed to delete '$normalizedName'. It may be a built-in template (cannot delete) or file not found."
         }
     }
 

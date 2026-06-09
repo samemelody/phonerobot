@@ -56,6 +56,7 @@ class JsScriptManager(private val context: Context) {
 
     /**
      * Initialize storage directories and copy protocol templates from assets.
+     * Always overwrites built-in templates to keep them in sync with app updates.
      */
     fun initializeStorage() {
         val scriptsDir = getScriptsDir()
@@ -68,13 +69,11 @@ class JsScriptManager(private val context: Context) {
         Log.i(TAG, "Scripts directory: ${scriptsDir.absolutePath}")
         Log.i(TAG, "Protocol directory: ${protocolDir.absolutePath}")
 
-        // Copy all protocol templates to external storage if not already present
+        // Always copy/overwrite built-in protocol templates to keep them in sync
         PROTOCOL_TEMPLATES.forEach { (assetName, _) ->
             val destFile = File(protocolDir, assetName)
-            if (!destFile.exists()) {
-                copyAssetToFile(assetName, destFile)
-                Log.i(TAG, "Installed protocol template: $assetName")
-            }
+            copyAssetToFile(assetName, destFile)
+            Log.i(TAG, "Synced protocol template: $assetName")
         }
     }
 
@@ -210,6 +209,34 @@ class JsScriptManager(private val context: Context) {
             true
         } catch (e: IOException) {
             Log.e(TAG, "Failed to save protocol: $protocolFileName", e)
+            false
+        }
+    }
+
+    /**
+     * Delete a user-created protocol file from external storage.
+     * Cannot delete built-in template protocols (will be re-copied on next init).
+     * @param protocolFileName e.g. "toy_car_protocol_fixed.js"
+     * @return true if deleted, false if not found or is a built-in template
+     */
+    fun deleteProtocol(protocolFileName: String): Boolean {
+        // Protect built-in templates
+        if (PROTOCOL_TEMPLATES.any { it.first == protocolFileName }) {
+            Log.w(TAG, "Cannot delete built-in protocol: $protocolFileName")
+            return false
+        }
+
+        val protocolFile = File(getProtocolDir(), protocolFileName)
+        return if (protocolFile.exists()) {
+            val deleted = protocolFile.delete()
+            if (deleted) {
+                Log.i(TAG, "Deleted protocol: $protocolFileName")
+            } else {
+                Log.w(TAG, "Failed to delete protocol: $protocolFileName")
+            }
+            deleted
+        } else {
+            Log.w(TAG, "Protocol not found: $protocolFileName")
             false
         }
     }

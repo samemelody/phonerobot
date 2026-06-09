@@ -17,7 +17,7 @@ object JsSandboxTest {
         scriptManager.initializeStorage()
         val channel = MockRobotChannel()
         val sandbox = QuickJSSandbox(
-            channel = channel,
+            channelProvider = { channel },
             scriptManager = scriptManager,
             enableDetailedLogs = true,
         )

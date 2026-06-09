@@ -14,7 +14,7 @@ import java.io.InputStreamReader
  * 4. Binary result is automatically sent via RobotChannel (BT/USB)
  */
 class QuickJSSandbox(
-    private val channel: RobotChannel,
+    private val channelProvider: () -> RobotChannel,
     private val scriptManager: JsScriptManager,
     private val enableDetailedLogs: Boolean = true,
 ) {
@@ -22,6 +22,9 @@ class QuickJSSandbox(
         private const val TAG = "QuickJSSandbox"
         private const val MAX_SCRIPT_LENGTH = 8192
     }
+
+    /** Get the current active channel (may change between BLE/USB at runtime) */
+    private val channel: RobotChannel get() = channelProvider()
 
     // Rhino context and scope
     private var context: Context? = null
@@ -41,6 +44,9 @@ class QuickJSSandbox(
 
             // Add console object for logging
             addConsoleObject()
+
+            // Add Uint8Array polyfill (Rhino doesn't have typed arrays)
+            addUint8ArrayPolyfill()
 
             Log.i(TAG, "Rhino sandbox initialized")
             true
@@ -113,6 +119,51 @@ class QuickJSSandbox(
         Log.d(TAG, "Added console object to Rhino scope")
     }
 
+    /**
+     * Add Uint8Array polyfill to Rhino scope.
+     * Rhino doesn't support ES6 typed arrays, so we provide a JS-based polyfill
+     * that creates a NativeArray-like object compatible with our processExecutionResult().
+     */
+    private fun addUint8ArrayPolyfill() {
+        val polyfill = """
+            var Uint8Array = (function() {
+                function Uint8Array(arr) {
+                    if (typeof arr === 'number') {
+                        this.length = arr;
+                        for (var i = 0; i < arr; i++) this[i] = 0;
+                    } else if (arr && typeof arr.length === 'number') {
+                        this.length = arr.length;
+                        for (var i = 0; i < arr.length; i++) this[i] = arr[i] & 0xFF;
+                    } else {
+                        this.length = 0;
+                    }
+                }
+                Uint8Array.prototype.set = function(arr, offset) {
+                    offset = offset || 0;
+                    for (var i = 0; i < arr.length; i++) {
+                        this[offset + i] = arr[i] & 0xFF;
+                    }
+                };
+                Uint8Array.prototype.slice = function(start, end) {
+                    start = start || 0;
+                    end = end || this.length;
+                    var result = [];
+                    for (var i = start; i < end; i++) result.push(this[i]);
+                    return new Uint8Array(result);
+                };
+                return Uint8Array;
+            })();
+        """.trimIndent()
+
+        try {
+            val cx = Context.getCurrentContext()
+            cx.evaluateString(scope, polyfill, "Uint8Array_polyfill", 1, null)
+            Log.i(TAG, "Added Uint8Array polyfill to Rhino scope")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to add Uint8Array polyfill", e)
+        }
+    }
+
     fun cleanup() {
         activeProtocol = null
         protocolObject = null
@@ -149,9 +200,13 @@ class QuickJSSandbox(
             return "Error: $err"
         }
 
+        // Rhino Context is thread-local — must enter for current thread
+        val threadContext = Context.enter()
+        threadContext.optimizationLevel = -1
+
         return try {
             // Execute the protocol JS to define the 'protocol' object
-            context?.evaluateString(scope, script, filename, 1, null)
+            threadContext.evaluateString(scope, script, filename, 1, null)
 
             // Get the protocol object from the scope
             val protocol = scope?.get("protocol", scope!!)
@@ -172,6 +227,8 @@ class QuickJSSandbox(
         } catch (e: Exception) {
             Log.e(TAG, "Error loading protocol: ${e.message}", e)
             "Error: ${e.message}"
+        } finally {
+            Context.exit()
         }
     }
 
@@ -206,12 +263,51 @@ class QuickJSSandbox(
      * @return Execution result description (String) or ByteArray for binary data
      */
     fun executeScript(javascriptCode: String): Any {
+        Log.i(TAG, "=== executeScript START ===")
+        Log.i(TAG, "Sandbox ready: ${isReady()}, Active protocol: $activeProtocol")
+        Log.i(TAG, "Input JS (${javascriptCode.length} chars): $javascriptCode")
+
         if (!isReady()) {
-            return "Error: Sandbox not initialized"
+            val err = "Error: Sandbox not initialized — call initialize() first"
+            Log.e(TAG, err)
+            return err
         }
 
         if (javascriptCode.length > MAX_SCRIPT_LENGTH) {
-            return "Error: Script too long (${javascriptCode.length} chars)"
+            val err = "Error: Script too long (${javascriptCode.length} chars, max $MAX_SCRIPT_LENGTH)"
+            Log.e(TAG, err)
+            return err
+        }
+
+        // Check protocol is loaded if code references 'protocol'
+        if (javascriptCode.contains("protocol") && protocolObject == null) {
+            val err = "Error: JS code references 'protocol' but no protocol is loaded. Call loadProtocol() first."
+            Log.e(TAG, err)
+            Log.e(TAG, "Current scope has these top-level vars: ${scope?.ids?.joinToString(", ")}")
+            return err
+        }
+
+        // Sanitize AI-generated JS: fix common mistakes
+        var code = javascriptCode
+
+        // Fix invalid hex literals like "50x32D8" → "0x32D8" (AI often prepends digits before 0x)
+        val invalidHexRegex = Regex("""\b(\d+)(x[0-9A-Fa-f]{2,})\b""")
+        if (invalidHexRegex.containsMatchIn(code)) {
+            val fixed = invalidHexRegex.replace(code) { match ->
+                val hexPart = match.groupValues[2]  // e.g. "x32D8"
+                Log.w(TAG, "Auto-fix: invalid hex literal '${match.value}' → '0${hexPart}'")
+                "0${hexPart}"  // e.g. "0x32D8"
+            }
+            Log.i(TAG, "Sanitized JS hex literals: '$code' → '$fixed'")
+            code = fixed
+        }
+
+        // Wrap in IIFE if code uses 'return' (Rhino only allows return inside functions)
+        val wrappedCode = if (code.trimStart().startsWith("return")) {
+            Log.d(TAG, "Wrapping JS in IIFE (code starts with 'return')")
+            "(function() { $code })()"
+        } else {
+            code
         }
 
         // Rhino Context is thread-local, so we need to enter a context for this thread
@@ -222,21 +318,46 @@ class QuickJSSandbox(
             // Use the thread-local context to evaluate the script
             val result = threadContext.evaluateString(
                 scope,
-                javascriptCode,
+                wrappedCode,
                 "AI_Generated_Script",
                 1,
                 null
             )
 
-            Log.i(TAG, "Executed JS: ${javascriptCode.take(80)}...")
-            Log.d(TAG, "Result type: ${result?.javaClass?.simpleName}")
+            Log.i(TAG, "Execution OK — result type: ${result?.javaClass?.simpleName}")
+            Log.d(TAG, "Result value: ${result.toString().take(200)}")
 
             // Process the result
-            processExecutionResult(result)
+            val processed = processExecutionResult(result)
+            Log.i(TAG, "Processed result type: ${processed.javaClass.simpleName}")
+            Log.i(TAG, "=== executeScript END (success) ===")
+            processed
 
+        } catch (e: org.mozilla.javascript.EcmaError) {
+            Log.e(TAG, "=== executeScript END (EcmaError) ===")
+            Log.e(TAG, "Rhino EcmaError: ${e.javaClass.simpleName} — ${e.message}")
+            Log.e(TAG, "Source: ${e.sourceName}:${e.lineNumber}:${e.columnNumber}")
+            Log.e(TAG, "Failed JS code: $javascriptCode")
+
+            // Log what's available in scope for debugging
+            val scopeVars = scope?.ids?.filterIsInstance<String>()?.joinToString(", ")
+            Log.e(TAG, "Scope variables: $scopeVars")
+            Log.e(TAG, "Protocol object present: ${protocolObject != null}")
+
+            "Error: ${e.message} (at ${e.sourceName}:${e.lineNumber})"
+        } catch (e: org.mozilla.javascript.EvaluatorException) {
+            Log.e(TAG, "=== executeScript END (EvaluatorException) ===")
+            Log.e(TAG, "Rhino EvaluatorException: ${e.message}")
+            Log.e(TAG, "Source: ${e.sourceName}:${e.lineNumber}:${e.columnNumber}")
+            Log.e(TAG, "Failed JS code: $javascriptCode")
+
+            "Error: Syntax error — ${e.message} (at ${e.sourceName}:${e.lineNumber})"
         } catch (e: Exception) {
-            Log.e(TAG, "Execution failed: ${e.message}", e)
-            "Error: ${e.message}"
+            Log.e(TAG, "=== executeScript END (Exception) ===")
+            Log.e(TAG, "Execution failed: ${e.javaClass.simpleName} — ${e.message}", e)
+            Log.e(TAG, "Failed JS code: $javascriptCode")
+
+            "Error: ${e.javaClass.simpleName} — ${e.message}"
         } finally {
             // Always exit the context to avoid thread-local leaks
             Context.exit()
@@ -245,7 +366,7 @@ class QuickJSSandbox(
 
     /**
      * Process the result of JS execution.
-     * If result is Uint8Array (NativeUint8Array), convert to ByteArray.
+     * If result is a Uint8Array (NativeUint8Array or polyfill), convert to ByteArray.
      */
     private fun processExecutionResult(result: Any?): Any {
         if (result == null || result == Undefined.instance) {
@@ -253,10 +374,13 @@ class QuickJSSandbox(
             return "Script executed successfully (no return value)"
         }
 
-        // Check if result is a Uint8Array (Rhino's NativeUint8Array)
-        if (result is NativeArray || result.javaClass.simpleName == "NativeUint8Array") {
+        // Check if result is a Uint8Array — either Rhino's native or our polyfill
+        val isNativeUint8Array = result is NativeArray || result.javaClass.simpleName == "NativeUint8Array"
+        val isPolyfillUint8Array = result is Scriptable && !isNativeUint8Array && isUint8ArrayPolyfill(result)
+
+        if (isNativeUint8Array || isPolyfillUint8Array) {
             val byteArray = convertUint8ArrayToByteArray(result)
-            Log.i(TAG, "Got Uint8Array result: ${byteArray.size} bytes")
+            Log.i(TAG, "Got Uint8Array result: ${byteArray.size} bytes (source: ${if (isNativeUint8Array) "native" else "polyfill"})")
 
             // Auto-send via channel
             if (byteArray.isNotEmpty()) {
@@ -268,6 +392,44 @@ class QuickJSSandbox(
 
         // If result is a number, string, etc.
         return result.toString()
+    }
+
+    /**
+     * Check if a Rhino Scriptable is our Uint8Array polyfill instance.
+     * The polyfill creates objects with numeric indices and a 'length' property,
+     * and the constructor name is "Uint8Array".
+     */
+    private fun isUint8ArrayPolyfill(obj: Scriptable): Boolean {
+        return try {
+            // Check if it has a 'length' property that is a number
+            val lengthProp = ScriptableObject.getProperty(obj, "length")
+            if (lengthProp !is Number) return false
+
+            val length = lengthProp.toInt()
+            if (length <= 0) return false
+
+            // Check if it has numeric indices (at least index 0)
+            val firstElem = ScriptableObject.getProperty(obj, 0)
+            if (firstElem == Scriptable.NOT_FOUND) return false
+
+            // Check constructor name via toString or className
+            val className = obj.javaClass.simpleName
+            if (className == "Uint8Array") return true
+
+            // For our polyfill, check if it looks like a byte array (all numeric indices are small ints)
+            if (length > 0 && length <= 256) {
+                val firstVal = when (firstElem) {
+                    is Number -> firstElem.toInt()
+                    else -> return false
+                }
+                // Byte values should be 0-255
+                firstVal in 0..255
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /**

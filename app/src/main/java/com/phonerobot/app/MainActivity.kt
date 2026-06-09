@@ -162,7 +162,7 @@ class MainActivity : ComponentActivity() {
             state.update { it.copy(bleStatus = "Connected") }
             addMessage(ChatMessage.Role.SYSTEM, "BLE connected: $name")
             mcuStatus = "MCU: connected, awaiting first response..."
-            startHeartbeat()
+            //startHeartbeat()
         }
         bleChannel.onConnectFailed = { reason ->
             state.update { it.copy(bleStatus = "Failed") }
@@ -210,7 +210,7 @@ class MainActivity : ComponentActivity() {
 
         // ── JS Sandbox (uses activeChannel: prefers BLE, falls back to USB) ──
         jsSandbox = QuickJSSandbox(
-            channel = activeChannel,
+            channelProvider = { activeChannel },
             scriptManager = scriptManager,
             enableDetailedLogs = true,
         )
@@ -562,17 +562,17 @@ class MainActivity : ComponentActivity() {
         mcuStatus = "MCU: disconnected"
     }
 
-    // ── Heartbeat (500ms interval, sent via active channel) ────
+    // ── Heartbeat (5s interval, sent via active channel) ────
 
     private fun startHeartbeat() {
         stopHeartbeat()
         heartbeatSeq = 0
         heartbeatJob = lifecycleScope.launch {
-            Log.i(TAG, "Heartbeat started (500ms interval)")
+            Log.i(TAG, "Heartbeat started (5s interval)")
             while (isActive && activeChannel.isConnected()) {
                 val frame = ToyCarProtocol.buildHeartbeat(heartbeatSeq++)
                 activeChannel.send(RobotCommand.RawData(frame))
-                delay(500L)
+                delay(5000L)
             }
             Log.i(TAG, "Heartbeat stopped")
         }
