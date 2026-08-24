@@ -28,6 +28,7 @@
     <string name="btn_disconnect">Disconnect</string>
     <string name="btn_select">Select</string>
     <string name="btn_connect">Connect</string>
+    <string name="action_retry">Retry</string>
 
     <!-- Content descriptions -->
     <string name="cd_send">Send</string>

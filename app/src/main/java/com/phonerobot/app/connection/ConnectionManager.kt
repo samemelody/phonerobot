@@ -32,6 +32,10 @@ class ConnectionManager(
     companion object {
         private const val TAG = "ConnectionManager"
         private const val HEARTBEAT_INTERVAL_MS = 500L
+
+        private const val WATCHDOG_MARGIN_MS = 1_500L
+        private const val CONTINUOUS_MOVE_CAP_MS = 10_000L
+        private const val MOTION_SAFETY_TIMEOUT_MS = 15_000L
     }
 
     private val appContext = context.applicationContext
@@ -39,9 +43,9 @@ class ConnectionManager(
     val usbChannel = UsbRobotChannel(appContext)
     val bleChannel = BleRobotChannel(appContext)
 
-    /** Channel currently used for sending (prefer BLE) */
+    /** Channel currently used for sending (prefer BLE), wrapped with motion safety inspection */
     val activeChannel: RobotChannel
-        get() = if (bleChannel.isConnected()) bleChannel else usbChannel
+        get() = SafetyChannel(if (bleChannel.isConnected()) bleChannel else usbChannel)
 
     // ── Observable connection state ──────────────────────────────
 
@@ -59,6 +63,7 @@ class ConnectionManager(
 
     private var heartbeatJob: Job? = null
     private var heartbeatSeq: Int = 0
+    private var watchdogJob: Job? = null
 
     init {
         usbChannel.registerUsbReceiver()
@@ -113,6 +118,69 @@ class ConnectionManager(
         val onMcuData: (ByteArray) -> Unit = { data -> handleMcuData(data) }
         usbChannel.onDataReceived = onMcuData
         bleChannel.onDataReceived = onMcuData
+    }
+
+    // ── Motion safety watchdog ───────────────────────────────────
+
+    /**
+     * Wraps the active channel and inspects outgoing protocol frames:
+     * arms a watchdog for every motion command so the car can never keep
+     * driving indefinitely if the MCU fails to stop on its own.
+     */
+    private inner class SafetyChannel(private val upstream: RobotChannel) : RobotChannel {
+        override fun isConnected(): Boolean = upstream.isConnected()
+
+        override suspend fun send(command: RobotCommand): Boolean {
+            if (command is RobotCommand.RawData) inspectOutgoingFrame(command.data)
+            return upstream.send(command)
+        }
+    }
+
+    private fun inspectOutgoingFrame(frame: ByteArray) {
+        if (frame.size < 4 || frame[0] != ToyCarProtocol.SYNC_BYTE) return
+        val pLen = frame[1].toInt() and 0xFF
+        val payloadEnd = 3 + pLen
+        if (frame.size < payloadEnd + 1) return
+        if (ToyCarProtocol.crc8(frame.copyOfRange(0, payloadEnd)) !=
+            (frame[payloadEnd].toInt() and 0xFF)
+        ) return
+
+        when (frame[2].toInt() and 0xFF) {
+            0x40 -> cancelWatchdog()
+            0x10 -> {
+                if (pLen < 4 || frame.size < 7) return
+                val durationMs =
+                    ((frame[6].toInt() and 0xFF) shl 8) or (frame[5].toInt() and 0xFF)
+                if (durationMs == 0) {
+                    postEvent("⚠ Continuous motion capped to ${CONTINUOUS_MOVE_CAP_MS / 1000}s")
+                    armMotionWatchdog(CONTINUOUS_MOVE_CAP_MS)
+                } else {
+                    armMotionWatchdog(durationMs + WATCHDOG_MARGIN_MS)
+                }
+            }
+            0x20, 0x30 -> armMotionWatchdog(MOTION_SAFETY_TIMEOUT_MS)
+        }
+    }
+
+    private fun armMotionWatchdog(timeoutMs: Long) {
+        cancelWatchdog()
+        watchdogJob = scope.launch {
+            delay(timeoutMs)
+            Log.w(TAG, "Motion watchdog fired after ${timeoutMs}ms — sending STOP")
+            postEvent("⚠ Auto-stopped: no completion confirmation from MCU")
+            sendRawStop()
+        }
+    }
+
+    private fun cancelWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = null
+    }
+
+    private suspend fun sendRawStop() {
+        val channel = if (bleChannel.isConnected()) bleChannel else usbChannel
+        runCatching { channel.send(RobotCommand.RawData(ToyCarProtocol.buildFrame(ToyCarProtocol.CMD_STOP))) }
+            .onFailure { Log.e(TAG, "Watchdog STOP send failed", it) }
     }
 
     // ── Operations ───────────────────────────────────────────────
@@ -181,6 +249,7 @@ class ConnectionManager(
     }
 
     fun shutdown() {
+        cancelWatchdog()
         stopHeartbeat()
         bleChannel.stopScan()
         bleChannel.disconnect()
@@ -253,6 +322,7 @@ class ConnectionManager(
                 }
             }
             "CMD_DONE" -> {
+                cancelWatchdog()
                 val resultName = parsed.data["resultName"] as? String ?: ""
                 if (resultName != "Success") {
                     postEvent("⚠ CMD failed: $resultName")

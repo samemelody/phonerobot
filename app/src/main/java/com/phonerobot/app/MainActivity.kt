@@ -14,10 +14,16 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import com.phonerobot.app.ui.MainScreen
@@ -90,8 +96,26 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val state by viewModel.uiState.collectAsState()
+                    val snackbarHostState = remember { SnackbarHostState() }
+                    val context = LocalContext.current
+
+                    LaunchedEffect(Unit) {
+                        viewModel.effects.collect { effect ->
+                            val actionLabel = effect.action?.let { context.getString(it.labelRes) }
+                            val result = snackbarHostState.showSnackbar(
+                                message = effect.text,
+                                actionLabel = actionLabel,
+                                duration = SnackbarDuration.Long
+                            )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                viewModel.onSnackAction(effect.action)
+                            }
+                        }
+                    }
+
                     MainScreen(
                         state = state,
+                        snackbarHostState = snackbarHostState,
                         onDestinationChanged = viewModel::setDestination,
                         onInputChanged = viewModel::setInput,
                         onSendClicked = viewModel::sendMessage,

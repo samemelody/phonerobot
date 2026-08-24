@@ -44,6 +44,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -85,6 +87,7 @@ private enum class StatusLevel { Neutral, Info, Progress, Success, Error }
 @Composable
 fun MainScreen(
     state: PhoneRobotUiState,
+    snackbarHostState: SnackbarHostState,
     onDestinationChanged: (PhoneRobotDestination) -> Unit,
     onInputChanged: (String) -> Unit,
     onSendClicked: () -> Unit,
@@ -96,6 +99,7 @@ fun MainScreen(
 ) {
     val currentDestination = state.currentDestination
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             PhoneRobotNavBar(
                 currentDestination = currentDestination,

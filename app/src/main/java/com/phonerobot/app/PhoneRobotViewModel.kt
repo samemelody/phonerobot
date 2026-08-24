@@ -18,11 +18,16 @@ import com.phonerobot.app.robot.QuickJSSandbox
 import com.phonerobot.app.ui.PhoneRobotDestination
 import com.phonerobot.app.ui.ModelStatus
 import com.phonerobot.app.ui.PhoneRobotUiState
+import com.phonerobot.app.ui.SnackAction
+import com.phonerobot.app.ui.UiEffect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
@@ -39,6 +44,23 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _state = MutableStateFlow(PhoneRobotUiState())
     val uiState: StateFlow<PhoneRobotUiState> = _state.asStateFlow()
+
+    private val _effects = MutableSharedFlow<UiEffect>(extraBufferCapacity = 16)
+    val effects: SharedFlow<UiEffect> = _effects.asSharedFlow()
+
+    private var lastPrompt: String? = null
+
+    private fun showSnackbar(text: String, action: SnackAction? = null) {
+        _effects.tryEmit(UiEffect.ShowSnackbar(text, action))
+    }
+
+    fun onSnackAction(action: SnackAction?) {
+        when (action) {
+            SnackAction.RetryModelLoad -> loadModel()
+            SnackAction.RetryInference -> retryLastInference()
+            null -> Unit
+        }
+    }
 
     val scriptManager: JsScriptManager = JsScriptManager(getApplication()).apply { initializeStorage() }
 
@@ -103,15 +125,36 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
         postUserMessage(input)
         _state.update { it.copy(currentInput = "", isAiThinking = true) }
+        lastPrompt = prompt
+        runInference(prompt)
+    }
 
+    private fun retryLastInference() {
+        val prompt = lastPrompt ?: return
+        if (!gemmaService.isReady) {
+            showSnackbar("Model not ready", SnackAction.RetryInference)
+            return
+        }
+        postUserMessage("(retry)")
+        _state.update { it.copy(isAiThinking = true) }
+        runInference(prompt)
+    }
+
+    private fun runInference(prompt: String) {
         viewModelScope.launch {
             try {
                 val result = gemmaService.generate(prompt)
                 Log.i(TAG, "Inference complete -> '${result.text.take(100)}' (${result.latencyMs}ms)")
-                postAssistantMessage(result.text)
+                if (result.text.startsWith("Error:")) {
+                    postSystemMessage("⚠ Inference failed — ${result.text.removePrefix("Error:").trim()}")
+                    showSnackbar("Inference failed", SnackAction.RetryInference)
+                } else {
+                    postAssistantMessage(result.text)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Inference error", e)
-                postAssistantMessage("Error: ${e.message}")
+                postSystemMessage("⚠ Inference failed: ${e.message}")
+                showSnackbar("Inference failed", SnackAction.RetryInference)
             } finally {
                 _state.update { it.copy(isAiThinking = false) }
             }
@@ -221,11 +264,14 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
                 } else {
                     Log.e(TAG, "loadModel: initialize() returned false")
                     _state.update { it.copy(modelStatus = ModelStatus.Error) }
+                    postSystemMessage("Failed to load model — check that the .litertlm file is in the models folder.")
+                    showSnackbar("Model failed to load", SnackAction.RetryModelLoad)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "loadModel: model loading failed", e)
                 _state.update { it.copy(modelStatus = ModelStatus.Error) }
                 postSystemMessage("Failed to load model: ${e.message}")
+                showSnackbar("Model failed to load", SnackAction.RetryModelLoad)
             }
         }
     }
