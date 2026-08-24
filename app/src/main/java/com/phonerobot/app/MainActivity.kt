@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import com.phonerobot.app.ui.MainScreen
+import com.phonerobot.app.ui.PhoneRobotTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -83,7 +84,7 @@ class MainActivity : ComponentActivity() {
         Log.i(TAG, "onCreate: initializing PhoneRobot app")
 
         setContent {
-            MaterialTheme {
+            PhoneRobotTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

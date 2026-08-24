@@ -2,13 +2,44 @@
 <resources>
     <string name="app_name">PhoneRobot</string>
 
+    <string name="nav_chat">Chat</string>
+    <string name="nav_robot">Robot</string>
+
     <!-- Main screen -->
     <string name="main_title">PhoneRobot — AI Robot Controller</string>
     <string name="model_status_label">Model Status</string>
+    <string name="model_status_idle">Model not loaded</string>
     <string name="model_status_loading">Loading Gemma 4…</string>
     <string name="model_status_ready">Gemma 4 Ready</string>
-    <string name="model_status_error">Model Error</string>
-    <string name="input_hint">Ask the robot something…</string>
+    <string name="model_status_error">Model Error - check logs</string>
+
+    <!-- Connection status -->
+    <string name="connection_connect_failed">Connect failed</string>
+    <string name="connection_permission_denied">Permission denied</string>
+    <string name="connection_requesting_permission">Requesting permission…</string>
+    <string name="usb_status_value">USB: %s</string>
+    <string name="ble_status_value">BLE: %s</string>
+    <string name="ble_connected">BLE: Connected</string>
+    <string name="ble_scanning">BLE: Scanning…</string>
+    <string name="ble_devices_found">%1$d device(s) found</string>
+
+    <!-- Buttons -->
+    <string name="btn_scan">Scan</string>
+    <string name="btn_disconnect">Disconnect</string>
+    <string name="btn_select">Select</string>
+    <string name="btn_connect">Connect</string>
+
+    <!-- Content descriptions -->
+    <string name="cd_send">Send</string>
+    <string name="cd_voice">Voice input</string>
+    <string name="cd_stop_recording">Stop recording</string>
+    <string name="cd_scan">Scan for devices</string>
+    <string name="cd_disconnect">Disconnect device</string>
+    <string name="cd_usb">USB connection status</string>
+    <string name="cd_ble">Bluetooth connection status</string>
+    <string name="cd_start_robot_mode">Start Robot Mode</string>
+
+    <string name="input_hint">Say something…</string>
     <string name="send_button">Send</string>
     <string name="voice_button">Voice</string>
 
@@ -28,6 +59,11 @@
     <string name="ai_response_title">AI Response</string>
     <string name="ai_thinking">Thinking…</string>
     <string name="robot_command_executed">Command executed: %s</string>
+
+    <!-- Robot mode -->
+    <string name="robot_mode_title">Robot Mode</string>
+    <string name="robot_mode_start_hint">Tap to start continuous listening</string>
+    <string name="robot_mode_description">Robot Mode: Continuous listening for voice commands.\nAI processes speech and controls robot.</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>

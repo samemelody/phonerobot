@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,26 +13,29 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Bluetooth
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,33 +48,38 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.phonerobot.app.R
 import com.phonerobot.app.ai.ChatMessage
 import com.phonerobot.app.RobotModeActivity
 
 /**
  * Navigation destinations for the bottom nav bar.
  */
-enum class PhoneRobotDestination(val icon: ImageVector, val label: String) {
-    CHAT(Icons.Default.Chat, "Chat"),
-    ROBOT_MODE(Icons.Default.Mic, "Robot"),
+enum class PhoneRobotDestination(val icon: ImageVector, val labelRes: Int) {
+    CHAT(Icons.AutoMirrored.Filled.Chat, R.string.nav_chat),
+    ROBOT_MODE(Icons.Default.Mic, R.string.nav_robot),
 }
 
 // USB hardware currently unusable (pin issue) — flip to true once fixed
 private const val SHOW_USB_STATUS = false
 
+private enum class StatusLevel { Neutral, Info, Progress, Success, Error }
+
 /**
- * Main screen with bottom navigation bar (Chat / Call tabs).
+ * Main screen with bottom navigation bar (Chat / Robot tabs).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,13 +109,10 @@ fun MainScreen(
                 .padding(paddingValues)
                 .padding(horizontal = 16.dp)
         ) {
-            // -- Status Bar --
             ModelStatusBar(state.modelStatus)
 
             if (SHOW_USB_STATUS) {
                 Spacer(Modifier.height(8.dp))
-
-                // -- USB Status Bar --
                 UsbStatusBar(
                     usbStatus = state.usbStatus,
                     onConnect = onConnectUsb,
@@ -115,7 +121,6 @@ fun MainScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // -- BLE Status Bar (primary) --
             BleStatusBar(
                 bleStatus = state.bleStatus,
                 scanResults = state.bleScanResults,
@@ -126,7 +131,6 @@ fun MainScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // -- Content based on selected tab --
             when (currentDestination) {
                 PhoneRobotDestination.CHAT -> {
                     ChatPanel(
@@ -160,8 +164,8 @@ private fun PhoneRobotNavBar(
     NavigationBar {
         PhoneRobotDestination.entries.forEach { destination ->
             NavigationBarItem(
-                icon = { Icon(destination.icon, contentDescription = destination.label) },
-                label = { Text(destination.label) },
+                icon = { Icon(destination.icon, contentDescription = null) },
+                label = { Text(stringResource(destination.labelRes)) },
                 selected = currentDestination == destination,
                 onClick = { onDestinationChanged(destination) }
             )
@@ -169,70 +173,81 @@ private fun PhoneRobotNavBar(
     }
 }
 
-// ==================== Status Bar ====================
+// ==================== Status Cards ====================
 
-/**
- * Shows model loading / ready / error status.
- */
 @Composable
-private fun ModelStatusBar(status: ModelStatus) {
+private fun StatusCard(
+    level: StatusLevel,
+    text: String,
+    leading: @Composable () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    val scheme = MaterialTheme.colorScheme
+    val status = PhoneRobotThemeDefaults.statusColors
+    val (container, content) = when (level) {
+        StatusLevel.Neutral -> scheme.surfaceVariant to scheme.onSurfaceVariant
+        StatusLevel.Info -> scheme.primaryContainer to scheme.onPrimaryContainer
+        StatusLevel.Progress -> status.warningContainer to status.onWarningContainer
+        StatusLevel.Success -> status.successContainer to status.onSuccessContainer
+        StatusLevel.Error -> scheme.errorContainer to scheme.onErrorContainer
+    }
     Card(
-        colors = CardDefaults.cardColors(
-            containerColor = when (status) {
-                ModelStatus.Ready -> Color(0xFFE8F5E9)
-                ModelStatus.Loading -> Color(0xFFFFF3E0)
-                ModelStatus.Error -> Color(0xFFFFEBEE)
-                else -> Color(0xFFF5F5F5)
-            }
-        ),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = container, contentColor = content)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            if (status == ModelStatus.Loading) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when (status) {
-                                ModelStatus.Ready -> Color(0xFF4CAF50)
-                                ModelStatus.Loading -> Color(0xFFFF9800)
-                                ModelStatus.Error -> Color(0xFFF44336)
-                                else -> Color(0xFF9E9E9E)
-                            }
-                        )
-                )
-            }
-
+            leading()
+            Spacer(Modifier.width(8.dp))
             Text(
-                text = when (status) {
-                    ModelStatus.Idle -> "Model not loaded"
-                    ModelStatus.Loading -> "Loading Gemma 4..."
-                    ModelStatus.Ready -> "Gemma 4 Ready"
-                    ModelStatus.Error -> "Model Error - check logs"
-                },
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 10.dp),
-                color = when (status) {
-                    ModelStatus.Error -> Color(0xFFD32F2F)
-                    else -> Color.DarkGray
-                }
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(1f)
             )
+            actions()
         }
     }
 }
 
-// ==================== BLE Status Bar ====================
+@Composable
+private fun LoadingIndicator() {
+    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+}
 
-/**
- * Shows BLE connection status, scan button, and discovered devices.
- */
+@Composable
+private fun ModelStatusBar(status: ModelStatus) {
+    val level = when (status) {
+        ModelStatus.Ready -> StatusLevel.Success
+        ModelStatus.Loading -> StatusLevel.Progress
+        ModelStatus.Error -> StatusLevel.Error
+        ModelStatus.Idle -> StatusLevel.Neutral
+    }
+    val text = when (status) {
+        ModelStatus.Idle -> stringResource(R.string.model_status_idle)
+        ModelStatus.Loading -> stringResource(R.string.model_status_loading)
+        ModelStatus.Ready -> stringResource(R.string.model_status_ready)
+        ModelStatus.Error -> stringResource(R.string.model_status_error)
+    }
+    val icon = when (status) {
+        ModelStatus.Ready -> Icons.Default.CheckCircle
+        ModelStatus.Error -> Icons.Default.Error
+        else -> Icons.Default.RadioButtonUnchecked
+    }
+    StatusCard(
+        level = level,
+        text = text,
+        leading = {
+            if (status == ModelStatus.Loading) {
+                LoadingIndicator()
+            } else {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+        }
+    )
+}
+
 @Composable
 private fun BleStatusBar(
     bleStatus: String,
@@ -245,193 +260,119 @@ private fun BleStatusBar(
     val isScanning = bleStatus.equals("Scanning...", ignoreCase = true)
     var showDeviceList by remember { mutableStateOf(false) }
 
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                isConnected -> Color(0xFFE3F2FD)
-                bleStatus.contains("fail", ignoreCase = true) -> Color(0xFFFFEBEE)
-                isScanning -> Color(0xFFFFF3E0)
-                scanResults.isNotEmpty() -> Color(0xFFE8F5E9)
-                else -> Color(0xFFF5F5F5)
+    val level = when {
+        isConnected -> StatusLevel.Success
+        bleStatus.contains("fail", ignoreCase = true) -> StatusLevel.Error
+        isScanning -> StatusLevel.Progress
+        scanResults.isNotEmpty() -> StatusLevel.Info
+        else -> StatusLevel.Neutral
+    }
+    val text = when {
+        isScanning -> stringResource(R.string.ble_scanning)
+        isConnected -> stringResource(R.string.ble_connected)
+        scanResults.isNotEmpty() -> stringResource(R.string.ble_devices_found, scanResults.size)
+        else -> stringResource(R.string.ble_status_value, bleStatus)
+    }
+
+    StatusCard(
+        level = level,
+        text = text,
+        leading = {
+            if (isScanning) {
+                LoadingIndicator()
+            } else {
+                Icon(Icons.Default.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
             }
-        ),
-        modifier = Modifier.fillMaxWidth()
+        }
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isScanning) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = Color(0xFFFF9800)
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Default.Bluetooth,
-                        contentDescription = "BLE",
-                        tint = when {
-                            isConnected -> Color(0xFF1976D2)
-                            else -> Color.Gray
-                        },
-                        modifier = Modifier.size(18.dp)
-                    )
+        if (scanResults.isNotEmpty() && !isConnected && !isScanning) {
+            Box {
+                TextButton(onClick = { showDeviceList = true }) {
+                    Text(stringResource(R.string.btn_select))
                 }
-                Text(
-                    text = when {
-                        isScanning -> "BLE: Scanning..."
-                        isConnected -> "BLE: Connected"
-                        scanResults.isNotEmpty() -> "BLE: ${scanResults.size} device(s) found"
-                        else -> "BLE: $bleStatus"
-                    },
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 8.dp),
-                    color = when {
-                        isConnected -> Color(0xFF1565C0)
-                        bleStatus.contains("fail", ignoreCase = true) -> Color(0xFFD32F2F)
-                        else -> Color.DarkGray
-                    }
-                )
-            }
-
-            Row {
-                // Show device list button (when results available and not connected)
-                if (scanResults.isNotEmpty() && !isConnected && !isScanning) {
-                    Box {
-                        TextButton(onClick = { showDeviceList = true }) {
-                            Text("Select", fontSize = 12.sp)
-                        }
-                        DropdownMenu(
-                            expanded = showDeviceList,
-                            onDismissRequest = { showDeviceList = false }
-                        ) {
-                            scanResults.forEach { (name, address) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(name, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                                            Text(address, fontSize = 11.sp, color = Color.Gray)
-                                        }
-                                    },
-                                    onClick = {
-                                        showDeviceList = false
-                                        onConnect(address)
-                                    }
-                                )
+                DropdownMenu(
+                    expanded = showDeviceList,
+                    onDismissRequest = { showDeviceList = false }
+                ) {
+                    scanResults.forEach { (name, address) ->
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(name, fontWeight = FontWeight.Medium)
+                                    Text(
+                                        address,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            },
+                            onClick = {
+                                showDeviceList = false
+                                onConnect(address)
                             }
-                        }
+                        )
                     }
                 }
+            }
+        }
 
-                // Disconnect button (when connected)
-                if (isConnected) {
-                    Button(
-                        onClick = onDisconnect,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFE53935)
-                        ),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            horizontal = 12.dp, vertical = 4.dp
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.Stop,
-                            contentDescription = "Disconnect",
-                            modifier = Modifier.size(14.dp),
-                            tint = Color.White
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Disconnect", fontSize = 12.sp, color = Color.White)
-                    }
-                }
-
-                // Scan button (when not connected)
-                if (!isConnected) {
-                    Button(
-                        onClick = onScan,
-                        enabled = !isScanning,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF1976D2)
-                        ),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                            horizontal = 12.dp, vertical = 4.dp
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = "Scan",
-                            modifier = Modifier.size(14.dp),
-                            tint = Color.White
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Scan", fontSize = 12.sp, color = Color.White)
-                    }
-                }
+        if (isConnected) {
+            Button(
+                onClick = onDisconnect,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError
+                ),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 12.dp, vertical = 6.dp
+                )
+            ) {
+                Icon(
+                    Icons.Default.Stop,
+                    contentDescription = stringResource(R.string.cd_disconnect),
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.btn_disconnect))
+            }
+        } else {
+            Button(
+                onClick = onScan,
+                enabled = !isScanning,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 12.dp, vertical = 6.dp
+                )
+            ) {
+                Icon(
+                    Icons.Default.Search,
+                    contentDescription = stringResource(R.string.cd_scan),
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.btn_scan))
             }
         }
     }
 }
 
-// ==================== USB Status Bar ====================
-
-/**
- * Shows USB connection status and connect button.
- */
 @Composable
 private fun UsbStatusBar(usbStatus: String, onConnect: () -> Unit) {
     val isConnected = usbStatus.equals("Connected", ignoreCase = true)
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = when {
-                isConnected -> Color(0xFFE8F5E9)
-                usbStatus.contains("fail", ignoreCase = true) ||
-                    usbStatus.contains("denied", ignoreCase = true) -> Color(0xFFFFEBEE)
-                else -> Color(0xFFF5F5F5)
-            }
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Usb,
-                    contentDescription = "USB",
-                    tint = when {
-                        isConnected -> Color(0xFF4CAF50)
-                        else -> Color.Gray
-                    },
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "USB: $usbStatus",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 8.dp),
-                    color = when {
-                        isConnected -> Color(0xFF2E7D32)
-                        usbStatus.contains("fail", ignoreCase = true) ||
-                            usbStatus.contains("denied", ignoreCase = true) -> Color(0xFFD32F2F)
-                        else -> Color.DarkGray
-                    }
-                )
-            }
+    val hasProblem = usbStatus.contains("fail", ignoreCase = true) ||
+        usbStatus.contains("denied", ignoreCase = true)
 
-            if (!isConnected) {
-                TextButton(onClick = onConnect) {
-                    Text("Connect", fontSize = 13.sp)
-                }
+    StatusCard(
+        level = when {
+            isConnected -> StatusLevel.Success
+            hasProblem -> StatusLevel.Error
+            else -> StatusLevel.Neutral
+        },
+        text = stringResource(R.string.usb_status_value, usbStatus),
+        leading = { Icon(Icons.Default.Usb, contentDescription = null, modifier = Modifier.size(18.dp)) }
+    ) {
+        if (!isConnected) {
+            TextButton(onClick = onConnect) {
+                Text(stringResource(R.string.btn_connect))
             }
         }
     }
@@ -439,9 +380,6 @@ private fun UsbStatusBar(usbStatus: String, onConnect: () -> Unit) {
 
 // ==================== Chat Panel ====================
 
-/**
- * Chat conversation + input bar.
- */
 @Composable
 private fun ChatPanel(
     messages: List<ChatMessage>,
@@ -453,12 +391,14 @@ private fun ChatPanel(
     onVoice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val bubbleMaxWidth = LocalConfiguration.current.screenWidthDp.dp * 0.85f
+    val scheme = MaterialTheme.colorScheme
+
     Card(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
+        colors = CardDefaults.cardColors()
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
-            // Message list
             LazyColumn(
                 reverseLayout = true,
                 modifier = Modifier.weight(1f)
@@ -467,24 +407,24 @@ private fun ChatPanel(
                     if (isThinking) {
                         ChatBubble(
                             role = ChatMessage.Role.ASSISTANT,
-                            text = "Thinking...",
-                            isTyping = true
+                            text = stringResource(R.string.ai_thinking),
+                            isTyping = true,
+                            maxWidth = bubbleMaxWidth
                         )
                     }
                 }
                 items(messages.reversed()) { msg ->
-                    ChatBubble(role = msg.role, text = msg.content)
+                    ChatBubble(role = msg.role, text = msg.content, maxWidth = bubbleMaxWidth)
                 }
             }
 
             Spacer(Modifier.height(6.dp))
 
-            // Input row
             Row(verticalAlignment = Alignment.Bottom) {
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = onInputChange,
-                    placeholder = { Text("Say something...") },
+                    placeholder = { Text(stringResource(R.string.input_hint)) },
                     modifier = Modifier.weight(1f),
                     maxLines = 3,
                     singleLine = false
@@ -493,8 +433,10 @@ private fun ChatPanel(
                 IconButton(onClick = { onVoice() }) {
                     Icon(
                         imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
-                        contentDescription = if (isRecording) "Stop recording" else "Voice",
-                        tint = if (isRecording) Color(0xFFF44336) else Color(0xFF1976D2)
+                        contentDescription = stringResource(
+                            if (isRecording) R.string.cd_stop_recording else R.string.cd_voice
+                        ),
+                        tint = if (isRecording) scheme.error else scheme.primary
                     )
                 }
 
@@ -503,9 +445,9 @@ private fun ChatPanel(
                     enabled = inputText.isNotBlank()
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Send,
-                        contentDescription = "Send",
-                        tint = if (inputText.isNotBlank()) Color(0xFF1976D2) else Color.Gray
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = stringResource(R.string.cd_send),
+                        tint = if (inputText.isNotBlank()) scheme.primary else scheme.outline
                     )
                 }
             }
@@ -515,20 +457,15 @@ private fun ChatPanel(
 
 // ==================== Robot Mode Panel ====================
 
-/**
- * Robot Mode panel — continuous listening mode.
- * Launches RobotModeActivity for voice command processing.
- */
 @Composable
 private fun RobotModePanel(
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var isActive by remember { mutableStateOf(false) }
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
+        colors = CardDefaults.cardColors()
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -538,15 +475,13 @@ private fun RobotModePanel(
                 .padding(24.dp)
         ) {
             Text(
-                text = "Robot Mode",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF2196F3)
+                text = stringResource(R.string.robot_mode_title),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary
             )
 
             Spacer(Modifier.height(32.dp))
 
-            // Robot mode button
             IconButton(
                 onClick = {
                     context.startActivity(
@@ -555,15 +490,13 @@ private fun RobotModePanel(
                 },
                 modifier = Modifier
                     .size(80.dp)
-                    .background(
-                        Color(0xFF2196F3),
-                        CircleShape
-                    )
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.Mic,
-                    contentDescription = "Start Robot Mode",
-                    tint = Color.White,
+                    contentDescription = stringResource(R.string.cd_start_robot_mode),
+                    tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(40.dp)
                 )
             }
@@ -571,18 +504,18 @@ private fun RobotModePanel(
             Spacer(Modifier.height(16.dp))
 
             Text(
-                text = "Tap to start continuous listening",
-                fontSize = 14.sp,
-                color = Color.Gray
+                text = stringResource(R.string.robot_mode_start_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(Modifier.height(24.dp))
 
             Text(
-                text = "Robot Mode: Continuous listening for voice commands.\nAI processes speech and controls robot.",
-                fontSize = 12.sp,
-                color = Color.Gray,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                text = stringResource(R.string.robot_mode_description),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
             )
         }
     }
@@ -590,12 +523,40 @@ private fun RobotModePanel(
 
 // ==================== Chat Bubble ====================
 
-/**
- * A single chat bubble.
- */
 @Composable
-private fun ChatBubble(role: ChatMessage.Role, text: String, isTyping: Boolean = false) {
+private fun ChatBubble(
+    role: ChatMessage.Role,
+    text: String,
+    maxWidth: Dp,
+    isTyping: Boolean = false,
+) {
+    val scheme = MaterialTheme.colorScheme
+
+    if (role == ChatMessage.Role.SYSTEM && !isTyping) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+        return
+    }
+
     val isUser = role == ChatMessage.Role.USER
+    val shape = if (isUser) {
+        RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp, topEnd = 16.dp, bottomEnd = 4.dp)
+    } else {
+        RoundedCornerShape(topStart = 16.dp, bottomStart = 4.dp, topEnd = 16.dp, bottomEnd = 16.dp)
+    }
+    val (bg, fg) = if (isUser) {
+        scheme.primaryContainer to scheme.onPrimaryContainer
+    } else {
+        scheme.surfaceVariant to scheme.onSurfaceVariant
+    }
+
     Row(
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
         modifier = Modifier
@@ -604,22 +565,23 @@ private fun ChatBubble(role: ChatMessage.Role, text: String, isTyping: Boolean =
     ) {
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(if (isUser) Color(0xFFBBDEFB) else Color(0xFFE8F5E9))
+                .widthIn(max = maxWidth)
+                .clip(shape)
+                .background(bg)
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             if (isTyping) {
-                Row {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         strokeWidth = 2.dp,
-                        color = Color.Gray
+                        color = fg
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(text = text, fontSize = 15.sp, color = Color.Gray)
+                    Text(text = text, style = MaterialTheme.typography.bodyMedium, color = fg)
                 }
             } else {
-                Text(text = text, fontSize = 15.sp)
+                Text(text = text, style = MaterialTheme.typography.bodyMedium, color = fg)
             }
         }
     }
