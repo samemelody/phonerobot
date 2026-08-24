@@ -1,8 +1,12 @@
 package com.phonerobot.app.robot
 
 import android.util.Log
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.mozilla.javascript.*
 import java.io.InputStreamReader
+import java.util.concurrent.Executors
 
 /**
  * JavaScript Sandbox for robot protocol execution using Rhino.
@@ -26,6 +30,18 @@ class QuickJSSandbox(
     /** Get the current active channel (may change between BLE/USB at runtime) */
     private val channel: RobotChannel get() = channelProvider()
 
+    /**
+     * Dedicated single thread for ALL Rhino operations.
+     * Rhino contexts and shared scope are not thread-safe; serializing every
+     * sandbox operation onto one thread eliminates the cross-thread races.
+     */
+    private val jsDispatcher = Executors.newSingleThreadExecutor { r -> Thread(r, "RhinoJS") }
+        .asCoroutineDispatcher()
+
+    /** Run a block on the dedicated JS thread and block the caller until done. */
+    private fun <T> runOnJsThread(block: () -> T): T =
+        runBlocking { withContext(jsDispatcher) { block() } }
+
     // Rhino context and scope
     private var context: Context? = null
     private var scope: Scriptable? = null
@@ -36,7 +52,9 @@ class QuickJSSandbox(
 
     // ── Lifecycle ─────────────────────────────────────────────
 
-    fun initialize(): Boolean {
+    fun initialize(): Boolean = runOnJsThread { initializeInternal() }
+
+    private fun initializeInternal(): Boolean {
         return try {
             context = Context.enter()
             context?.optimizationLevel = -1 // -1 for Android compatibility
@@ -164,7 +182,9 @@ class QuickJSSandbox(
         }
     }
 
-    fun cleanup() {
+    fun cleanup() = runOnJsThread { cleanupInternal() }
+
+    private fun cleanupInternal() {
         activeProtocol = null
         protocolObject = null
 
@@ -176,6 +196,7 @@ class QuickJSSandbox(
 
         context = null
         scope = null
+        jsDispatcher.close()
 
         Log.i(TAG, "Sandbox cleaned up")
     }
@@ -188,7 +209,9 @@ class QuickJSSandbox(
      * Load a protocol template into the sandbox.
      * Executes the JS file in Rhino to get the protocol object.
      */
-    fun loadProtocol(filename: String): String {
+    fun loadProtocol(filename: String): String = runOnJsThread { loadProtocolInternal(filename) }
+
+    private fun loadProtocolInternal(filename: String): String {
         if (!isReady()) {
             return "Error: Sandbox not initialized"
         }
@@ -262,7 +285,9 @@ class QuickJSSandbox(
      * @param javascriptCode AI-generated JS code
      * @return Execution result description (String) or ByteArray for binary data
      */
-    fun executeScript(javascriptCode: String): Any {
+    fun executeScript(javascriptCode: String): Any = runOnJsThread { executeScriptInternal(javascriptCode) }
+
+    private fun executeScriptInternal(javascriptCode: String): Any {
         Log.i(TAG, "=== executeScript START ===")
         Log.i(TAG, "Sandbox ready: ${isReady()}, Active protocol: $activeProtocol")
         Log.i(TAG, "Input JS (${javascriptCode.length} chars): $javascriptCode")
@@ -460,10 +485,10 @@ class QuickJSSandbox(
     /**
      * Execute a saved script by name.
      */
-    fun executeSavedScript(scriptName: String): Any {
+    fun executeSavedScript(scriptName: String): Any = runOnJsThread {
         val content = scriptManager.loadScript(scriptName)
-        return if (content != null) {
-            executeScript(content)
+        if (content != null) {
+            executeScriptInternal(content)
         } else {
             "Error: Script '$scriptName' not found"
         }
@@ -500,93 +525,11 @@ class QuickJSSandbox(
 
     // ── Status ────────────────────────────────────────────────
 
-    fun getSandboxStatus(): String {
-        return buildString {
+    fun getSandboxStatus(): String = runOnJsThread {
+        buildString {
             append("Sandbox: ${if (isReady()) "Ready (Rhino)" else "Not initialized"}\n")
             append("Protocol: ${activeProtocol ?: "None loaded"}\n")
             append("Channel: ${if (channel.isConnected()) "Connected" else "Disconnected"}")
         }
-    }
-
-    // ── Testing ────────────────────────────────────────
-
-    /**
-     * Test the sandbox with a simple command.
-     * Call this to verify the sandbox is working correctly.
-     *
-     * @return Test results as a formatted string
-     */
-    fun testSandbox(): String {
-        val results = StringBuilder()
-        results.append("=== JS Sandbox Test ===\n\n")
-
-        Log.i(TAG, "========== JS SANDBOX TEST START ==========")
-
-        // Test 1: Initialize
-        results.append("1. Initializing sandbox...\n")
-        val initOk = initialize()
-        results.append("   Result: ${if (initOk) "✓ OK" else "✗ FAILED"}\n\n")
-
-        Log.i(TAG, "Test 1 - Initialize: ${if (initOk) "OK" else "FAILED"}")
-
-        if (!initOk) {
-            results.append("Cannot continue - sandbox init failed")
-            Log.e(TAG, "Test FAILED: Sandbox init failed")
-            Log.i(TAG, "========== JS SANDBOX TEST END ==========")
-            return results.toString()
-        }
-
-        // Test 2: Load protocol
-        results.append("2. Loading protocol: rover_protocol.js...\n")
-        val loadResult = loadProtocol("rover_protocol.js")
-        results.append("   Result: $loadResult\n\n")
-
-        Log.i(TAG, "Test 2 - Load protocol: $loadResult")
-
-        if (activeProtocol == null) {
-            results.append("Cannot continue - protocol load failed")
-            cleanup()
-            Log.e(TAG, "Test FAILED: Protocol load failed")
-            Log.i(TAG, "========== JS SANDBOX TEST END ==========")
-            return results.toString()
-        }
-
-        // Test 3: Execute a simple command
-        results.append("3. Executing: protocol.packStopRequest()...\n")
-        val execResult = executeScript("return protocol.packStopRequest();")
-        results.append("   Result: $execResult\n")
-        results.append("   Type: ${execResult.javaClass.simpleName}\n\n")
-
-        Log.i(TAG, "Test 3 - Execute stop: result type = ${execResult.javaClass.simpleName}")
-        if (execResult is ByteArray) {
-            val hex = execResult.joinToString(" ") { "%02X".format(it) }
-            results.append("   ✓ Got ByteArray (${execResult.size} bytes)\n")
-            results.append("   Hex: $hex\n\n")
-            Log.i(TAG, "Test 3 - Got ${execResult.size} bytes: $hex")
-        }
-
-        // Test 4: Execute drive command
-        results.append("4. Executing: protocol.packDriveRequest(100, 0, 50)...\n")
-        val driveResult = executeScript("return protocol.packDriveRequest(100, 0, 50);")
-        results.append("   Result: $driveResult\n")
-        results.append("   Type: ${driveResult.javaClass.simpleName}\n\n")
-
-        Log.i(TAG, "Test 4 - Execute drive: result type = ${driveResult.javaClass.simpleName}")
-        if (driveResult is ByteArray) {
-            val hex = driveResult.joinToString(" ") { "%02X".format(it) }
-            results.append("   ✓ Got ByteArray (${driveResult.size} bytes)\n")
-            results.append("   Hex: $hex\n\n")
-            Log.i(TAG, "Test 4 - Got ${driveResult.size} bytes: $hex")
-        }
-
-        // Cleanup
-        cleanup()
-        results.append("5. Cleanup complete\n")
-        results.append("\n=== Test Complete ===\n")
-
-        Log.i(TAG, "Test 5 - Cleanup complete")
-        Log.i(TAG, "========== JS SANDBOX TEST END ==========")
-
-        return results.toString()
     }
 }

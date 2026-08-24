@@ -21,7 +21,7 @@ class FlexibleJavaScriptTool(
     private val scriptManager: JsScriptManager,
 ) : ToolSet {
 
-    @Tool(description = "MANDATORY FIRST CALL: Call this IMMEDIATELY when user mentions any robot, vehicle, drone, arm, or mechanical device. Returns available commands. Available filenames: 'rover_protocol.js' (default for UGV/rover), 'toy_car_protocol_core.js' (car), 'drone_protocol.js' (UAV), 'robot_arm_protocol.js' (arm), 'bipedal_robot_protocol.js' (humanoid). DEFAULT to 'rover_protocol.js' if unsure.")
+    @Tool(description = "MANDATORY FIRST CALL: Call this IMMEDIATELY when user mentions any robot, vehicle, drone, arm, or mechanical device. Returns available commands. The available protocol is 'toy_car_protocol_core.js' (RC car with packMove/packTurn/packArc/packStop).")
     fun listProtocols(): String {
         val templates = scriptManager.listProtocolTemplates()
         val installed = scriptManager.listInstalledProtocols()
@@ -48,14 +48,14 @@ class FlexibleJavaScriptTool(
 
     @Tool(description = "Call IMMEDIATELY when user gives a robot command (move, turn, stop, grab, rotate, drive, forward, backward, left, right). Loads protocol and returns available functions. DO NOT ask questions - just load the protocol and execute.")
     fun loadProtocol(
-        @ToolParam(description = "Protocol filename. DEFAULT: 'rover_protocol.js' for most robots. Others: 'toy_car_protocol_core.js', 'drone_protocol.js', 'robot_arm_protocol.js', 'bipedal_robot_protocol.js'. If user says 'car' use 'toy_car_protocol_core.js', if 'drone' use 'drone_protocol.js'") filename: String
+        @ToolParam(description = "Protocol filename. Use 'toy_car_protocol_core.js' (the only built-in protocol).") filename: String
     ): String {
         return jsSandbox.loadProtocol(filename)
     }
 
-    @Tool(description = "Execute JavaScript to generate and send robot command. Call IMMEDIATELY for ANY robot command (move, turn, stop, etc). The JS code MUST use protocol.packXxxRequest() functions. Binary result is AUTO-SENT to robot via USB/Bluetooth. DO NOT ask for confirmation - execute directly.")
+    @Tool(description = "Execute JavaScript to generate and send robot command. Call IMMEDIATELY for ANY robot command (move, turn, stop, etc). The JS code MUST call protocol.packMove()/packTurn()/packArc()/packStop(). Binary result is AUTO-SENT to robot via USB/Bluetooth. DO NOT ask for confirmation - execute directly.")
     fun executeJavaScript(
-        @ToolParam(description = "JavaScript code using protocol functions. Examples: 'return protocol.packDriveRequest(200, 0, 100);' for forward movement, 'return protocol.packRotateRequest(-90, 100);' for left turn, 'return protocol.packStopRequest();' for stop. Check loaded protocol for exact function names and parameters.") jsCode: String
+        @ToolParam(description = "JavaScript code using protocol functions. Examples: 'return protocol.packMove(protocol.DIR_FORWARD, 50, 1000);' moves forward at 50% speed for 1s, 'return protocol.packTurn(protocol.TURN_LEFT, 90, 40);' turns left 90 degrees, 'return protocol.packStop();' stops motors. Check loaded protocol for exact function names and parameters.") jsCode: String
     ): String {
         Log.i("FlexibleJS", "=== executeJavaScript START ===")
         Log.i("FlexibleJS", "Input JS code (${jsCode.length} chars): $jsCode")

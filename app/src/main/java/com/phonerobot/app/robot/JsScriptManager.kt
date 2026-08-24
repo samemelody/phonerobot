@@ -21,11 +21,7 @@ class JsScriptManager(private val context: Context) {
 
         /** All protocol template assets bundled with the app */
         val PROTOCOL_TEMPLATES = listOf(
-            "toy_car_protocol_core.js" to "Toy Car - basic RC car control",
-            "rover_protocol.js"        to "Rover - UGV with GPS & sensors",
-            "drone_protocol.js"        to "Drone - multirotor UAV flight control",
-            "robot_arm_protocol.js"    to "Robot Arm - 6-DOF manipulator",
-            "bipedal_robot_protocol.js" to "Bipedal - humanoid walking robot"
+            "toy_car_protocol_core.js" to "Toy Car - basic RC car control (packMove/packTurn/packArc/packStop)"
         )
     }
 

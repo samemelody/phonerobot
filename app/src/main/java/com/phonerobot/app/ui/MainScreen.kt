@@ -66,6 +66,9 @@ enum class PhoneRobotDestination(val icon: ImageVector, val label: String) {
     ROBOT_MODE(Icons.Default.Mic, "Robot"),
 }
 
+// USB hardware currently unusable (pin issue) — flip to true once fixed
+private const val SHOW_USB_STATUS = false
+
 /**
  * Main screen with bottom navigation bar (Chat / Call tabs).
  */
@@ -73,17 +76,16 @@ enum class PhoneRobotDestination(val icon: ImageVector, val label: String) {
 @Composable
 fun MainScreen(
     state: PhoneRobotUiState,
-    currentDestination: PhoneRobotDestination,
     onDestinationChanged: (PhoneRobotDestination) -> Unit,
     onInputChanged: (String) -> Unit,
     onSendClicked: () -> Unit,
     onVoiceClicked: () -> Unit,
-    onCallClick: () -> Unit,
     onConnectUsb: () -> Unit = {},
     onScanBle: () -> Unit = {},
     onConnectBle: (String) -> Unit = {},
     onDisconnectBle: () -> Unit = {},
 ) {
+    val currentDestination = state.currentDestination
     Scaffold(
         bottomBar = {
             PhoneRobotNavBar(
@@ -100,6 +102,16 @@ fun MainScreen(
         ) {
             // -- Status Bar --
             ModelStatusBar(state.modelStatus)
+
+            if (SHOW_USB_STATUS) {
+                Spacer(Modifier.height(8.dp))
+
+                // -- USB Status Bar --
+                UsbStatusBar(
+                    usbStatus = state.usbStatus,
+                    onConnect = onConnectUsb,
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
 
