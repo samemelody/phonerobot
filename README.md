@@ -32,6 +32,8 @@ Large Language Models excel at **language understanding and logical reasoning**,
   ◀── Core LLM ──▶  ◀─ Center ─▶  ◀─ Extension ─▶  ◀── Physical ──▶
 ```
 
+The three extensions above give an agent hands and eyes. The fourth principle below — **self-iteration** — is what turns a tool-using agent into a robot that grows into its own body and environment.
+
 ### 1. From Language to Thinking
 LLMs naturally convert language into structured reasoning — planning, decomposition, algorithmic thinking. This is the foundation and **central hub** of the agent.
 
@@ -41,11 +43,23 @@ LLMs are weak at precise math, but they can **write code to compute**. When reas
 ### 3. From Thinking to Physical Agency
 **Perception** (microphone today, camera next) feeds the physical world into Thinking; **Action** carries decisions out over Bluetooth LE to real motors.
 
-This closes the loop: **perceive → think (+ compute) → act → observe**.
+This closes the loop: **perceive → think (+ compute) → act → observe**. But observation alone is where conventional agents stop — and that is not enough.
 
-### Self-Iteration: The Direction
+### 4. From Acting to Self-Iterating
 
-Past software spreads as endlessly copyable code. The goal of this project is a robot that **iterates itself**: starting from a general foundation (the on-device LLM + one seeded protocol script), it reads its own driver code when commands misbehave, writes corrected or entirely new protocol scripts, loads them at runtime, and judges the result from telemetry — adapting to *this* chassis, *these* motors, *this* floor.
+This is the discovery that reshaped this project's direction, and we now consider it the most important idea here.
+
+Past software spread as endlessly **copyable** code: write once, humans refine it, everyone runs identical copies. That model breaks for robots, because no two physical robots live in the same conditions — motor quirks, battery sag, wheel grip, floor friction, task context all differ per machine and drift over time. No human team can hand-tune driver code for every robot's actual situation, and a frozen protocol script is always slightly wrong somewhere.
+
+The only software that fits a machine perfectly is software written *for* that machine — ideally **by** that machine. So the loop must continue past observe:
+
+```
+perceive → think → act → observe → diagnose → rewrite own driver → reload → verify
+                ▲                                                        │
+                └────────────── better next time ────────────────────────┘
+```
+
+Starting from a shared general foundation (the on-device LLM + one seeded protocol script), each robot converges on its own local optimum through iterations of reading its own code, changing it, and judging the result from telemetry. Software stops being a copied artifact and becomes a living adaptation.
 
 Already working today:
 - the AI can `readProtocol` / `writeProtocol` / `loadProtocol` — new driver scripts take effect without reinstalling anything
