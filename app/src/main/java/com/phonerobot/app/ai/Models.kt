@@ -5,10 +5,12 @@ package com.phonerobot.app.ai
  */
 data class ChatMessage(
     val role: Role,
-    val content: String
+    val content: String,
+    val timestampMs: Long = System.currentTimeMillis(),
+    val toolName: String? = null
 ) {
     enum class Role {
-        USER, ASSISTANT, SYSTEM
+        USER, ASSISTANT, SYSTEM, TOOL
     }
 }
 

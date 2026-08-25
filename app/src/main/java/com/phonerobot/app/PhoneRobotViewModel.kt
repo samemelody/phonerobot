@@ -245,7 +245,9 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
         viewModelScope.launch {
             try {
-                val flexibleJsTool = FlexibleJavaScriptTool(jsSandbox, scriptManager)
+                val flexibleJsTool = FlexibleJavaScriptTool(jsSandbox, scriptManager) { toolName, summary, body ->
+                    postToolMessage(toolName, summary, body)
+                }
                 val generalTools = GeneralTools()
 
                 val success = gemmaService.initialize(
@@ -288,6 +290,19 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun postAssistantMessage(text: String) {
         _state.update { it.copy(messages = it.messages + ChatMessage(ChatMessage.Role.ASSISTANT, text)) }
+    }
+
+    private fun postToolMessage(toolName: String, summary: String, body: String) {
+        val content = if (body.isBlank()) summary else "$summary\n\n$body"
+        _state.update {
+            it.copy(
+                messages = it.messages + ChatMessage(
+                    ChatMessage.Role.TOOL,
+                    content,
+                    toolName = toolName
+                )
+            )
+        }
     }
 
     // ── Teardown ─────────────────────────────────────────────────

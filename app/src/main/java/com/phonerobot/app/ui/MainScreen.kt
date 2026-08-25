@@ -1,6 +1,15 @@
 package com.phonerobot.app.ui
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,8 +31,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
@@ -46,6 +58,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,16 +69,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.phonerobot.app.R
 import com.phonerobot.app.ai.ChatMessage
 import com.phonerobot.app.RobotModeActivity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Navigation destinations for the bottom nav bar.
@@ -410,15 +431,20 @@ private fun ChatPanel(
                 item {
                     if (isThinking) {
                         ChatBubble(
-                            role = ChatMessage.Role.ASSISTANT,
-                            text = stringResource(R.string.ai_thinking),
+                            message = ChatMessage(
+                                ChatMessage.Role.ASSISTANT,
+                                stringResource(R.string.ai_thinking)
+                            ),
                             isTyping = true,
                             maxWidth = bubbleMaxWidth
                         )
                     }
                 }
-                items(messages.reversed()) { msg ->
-                    ChatBubble(role = msg.role, text = msg.content, maxWidth = bubbleMaxWidth)
+                items(
+                    messages.reversed(),
+                    key = { msg -> msg.timestampMs * 31L + msg.content.hashCode() }
+                ) { msg ->
+                    ChatBubble(message = msg, maxWidth = bubbleMaxWidth)
                 }
             }
 
@@ -527,18 +553,60 @@ private fun RobotModePanel(
 
 // ==================== Chat Bubble ====================
 
+private data class ContentSegment(val isCode: Boolean, val text: String)
+
+private fun parseContentSegments(text: String): List<ContentSegment> {
+    if (!text.contains("```")) return listOf(ContentSegment(false, text))
+
+    val segments = mutableListOf<ContentSegment>()
+    var remaining = text
+    while (true) {
+        val start = remaining.indexOf("```")
+        if (start < 0) {
+            if (remaining.isNotEmpty()) segments.add(ContentSegment(false, remaining))
+            break
+        }
+        val before = remaining.substring(0, start)
+        if (before.isNotEmpty()) segments.add(ContentSegment(false, before))
+        val lineBreak = remaining.indexOf('\n', start)
+        val codeStart = if (lineBreak in (start + 1)..remaining.length) lineBreak + 1 else start + 3
+        val end = remaining.indexOf("```", codeStart)
+        if (end < 0) {
+            segments.add(ContentSegment(true, remaining.substring(codeStart)))
+            break
+        }
+        segments.add(ContentSegment(true, remaining.substring(codeStart, end).trimEnd('\n')))
+        remaining = remaining.substring(end + 3)
+    }
+    return segments
+}
+
+@Composable
+private fun TimestampText(timestampMs: Long) {
+    val time = remember(timestampMs) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestampMs))
+    }
+    Text(
+        text = time,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.outline,
+        modifier = Modifier.padding(horizontal = 6.dp)
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatBubble(
-    role: ChatMessage.Role,
-    text: String,
+    message: ChatMessage,
     maxWidth: Dp,
     isTyping: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val clipboard = LocalClipboardManager.current
 
-    if (role == ChatMessage.Role.SYSTEM && !isTyping) {
+    if (message.role == ChatMessage.Role.SYSTEM && !isTyping) {
         Text(
-            text = text,
+            text = message.content,
             style = MaterialTheme.typography.bodySmall,
             color = scheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -549,7 +617,12 @@ private fun ChatBubble(
         return
     }
 
-    val isUser = role == ChatMessage.Role.USER
+    if (message.role == ChatMessage.Role.TOOL && !isTyping) {
+        ToolCard(message = message, maxWidth = maxWidth)
+        return
+    }
+
+    val isUser = message.role == ChatMessage.Role.USER
     val shape = if (isUser) {
         RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp, topEnd = 16.dp, bottomEnd = 4.dp)
     } else {
@@ -561,8 +634,8 @@ private fun ChatBubble(
         scheme.surfaceVariant to scheme.onSurfaceVariant
     }
 
-    Row(
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+    Column(
+        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp)
@@ -572,21 +645,153 @@ private fun ChatBubble(
                 .widthIn(max = maxWidth)
                 .clip(shape)
                 .background(bg)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = { clipboard.setText(AnnotatedString(message.content)) }
+                )
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             if (isTyping) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp,
-                        color = fg
-                    )
+                    TypingDots(color = fg)
                     Spacer(Modifier.width(8.dp))
-                    Text(text = text, style = MaterialTheme.typography.bodyMedium, color = fg)
+                    Text(text = message.content, style = MaterialTheme.typography.bodyMedium, color = fg)
                 }
             } else {
-                Text(text = text, style = MaterialTheme.typography.bodyMedium, color = fg)
+                val segments = remember(message.content) { parseContentSegments(message.content) }
+                Column {
+                    segments.forEach { segment ->
+                        if (segment.isCode) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(vertical = 4.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(scheme.inverseSurface)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = segment.text.trim(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = scheme.inverseOnSurface
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = segment.text,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = fg
+                            )
+                        }
+                    }
+                }
             }
+        }
+        TimestampText(message.timestampMs)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ToolCard(message: ChatMessage, maxWidth: Dp) {
+    val scheme = MaterialTheme.colorScheme
+    val clipboard = LocalClipboardManager.current
+    var expanded by remember(message.timestampMs) { mutableStateOf(false) }
+
+    val separator = message.content.indexOf("\n\n")
+    val summary = if (separator > 0) message.content.substring(0, separator) else message.content
+    val body = if (separator > 0) message.content.substring(separator + 2) else ""
+
+    Column(
+        horizontalAlignment = Alignment.Start,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = scheme.secondaryContainer,
+            contentColor = scheme.onSecondaryContainer,
+            tonalElevation = 1.dp,
+            modifier = Modifier
+                .widthIn(max = maxWidth)
+                .combinedClickable(
+                    onClick = { expanded = !expanded },
+                    onLongClick = { clipboard.setText(AnnotatedString(message.content)) }
+                )
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Build,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = message.toolName ?: "tool",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = summary.replace("\n", " "),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = if (expanded) Int.MAX_VALUE else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                if (expanded && body.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(scheme.inverseSurface)
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = body,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = scheme.inverseOnSurface
+                        )
+                    }
+                }
+            }
+        }
+        TimestampText(message.timestampMs)
+    }
+}
+
+@Composable
+private fun TypingDots(color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        repeat(3) { index ->
+            val transition = rememberInfiniteTransition(label = "typing_dot_$index")
+            val alpha by transition.animateFloat(
+                initialValue = 0.25f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 500, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse,
+                    initialStartOffset = StartOffset(index * 200)
+                ),
+                label = "dot_alpha_$index"
+            )
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 2.dp)
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(color.copy(alpha = alpha))
+            )
         }
     }
 }

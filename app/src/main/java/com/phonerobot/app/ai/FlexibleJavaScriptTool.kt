@@ -19,7 +19,16 @@ import org.mozilla.javascript.Context
 class FlexibleJavaScriptTool(
     private val jsSandbox: QuickJSSandbox,
     private val scriptManager: JsScriptManager,
+    private val onToolEvent: ((toolName: String, summary: String, body: String) -> Unit)? = null,
 ) : ToolSet {
+
+    private fun report(toolName: String, summary: String, body: String = "") {
+        try {
+            onToolEvent?.invoke(toolName, summary, body)
+        } catch (e: Exception) {
+            Log.w("FlexibleJS", "onToolEvent callback failed", e)
+        }
+    }
 
     @Tool(description = "MANDATORY FIRST CALL: Call this IMMEDIATELY when user mentions any robot, vehicle, drone, arm, or mechanical device. Returns available commands. The available protocol is 'toy_car_protocol_core.js' (RC car with packMove/packTurn/packArc/packStop).")
     fun listProtocols(): String {
@@ -50,7 +59,10 @@ class FlexibleJavaScriptTool(
     fun loadProtocol(
         @ToolParam(description = "Protocol filename. Use 'toy_car_protocol_core.js' (the only built-in protocol).") filename: String
     ): String {
-        return jsSandbox.loadProtocol(filename)
+        val result = jsSandbox.loadProtocol(filename)
+        val failed = result.startsWith("Error")
+        report("loadProtocol", if (failed) "✗ $filename" else "✓ $filename loaded", result)
+        return result
     }
 
     @Tool(description = "Execute JavaScript to generate and send robot command. Call IMMEDIATELY for ANY robot command (move, turn, stop, etc). The JS code MUST call protocol.packMove()/packTurn()/packArc()/packStop(). Binary result is AUTO-SENT to robot via USB/Bluetooth. DO NOT ask for confirmation - execute directly.")
@@ -64,6 +76,7 @@ class FlexibleJavaScriptTool(
         if (!jsSandbox.isReady()) {
             val err = "✗ Sandbox not initialized — cannot execute JS. Try calling loadProtocol() first."
             Log.e("FlexibleJS", err)
+            report("executeJavaScript", "✗ Sandbox not initialized", jsCode)
             return err
         }
 
@@ -77,7 +90,7 @@ class FlexibleJavaScriptTool(
         Log.i("FlexibleJS", "Result type: ${result?.javaClass?.simpleName}")
         Log.i("FlexibleJS", "Result value: ${result.toString().take(200)}")
 
-        return when (result) {
+        val response = when (result) {
             is ByteArray -> {
                 val hex = result.joinToString(" ") { "%02X".format(it) }
                 Log.i("FlexibleJS", "✓ ByteArray result: ${result.size} bytes [$hex]")
@@ -98,14 +111,24 @@ class FlexibleJavaScriptTool(
                 result.toString()
             }
         }
+
+        when {
+            response.startsWith("✓ Sent") -> report("executeJavaScript", response, jsCode)
+            response.startsWith("✗") -> report("executeJavaScript", "✗ JS execution failed", "$response\n\n$jsCode")
+            else -> report("executeJavaScript", response.take(120), jsCode)
+        }
+
+        return response
     }
 
     @Tool(description = "ONLY call this if executeJavaScript() FAILS or returns unexpected results. Reads protocol script to debug function names, parameters, or byte packing issues. DO NOT call this for normal operation.")
     fun readProtocol(
         @ToolParam(description = "Protocol filename to read and debug") filename: String
     ): String {
-        return scriptManager.loadProtocolScript(filename)
+        val result = scriptManager.loadProtocolScript(filename)
             ?: "Protocol '$filename' not found. Call listProtocols() first."
+        report("readProtocol", if (result.startsWith("Protocol ")) "✗ $filename not found" else "✓ Read $filename (${result.length} chars)", result)
+        return result
     }
 
     @Tool(description = "ONLY call this if you need to FIX a broken protocol. Writes a corrected version (original is preserved). After writing, you MUST call loadProtocol() with the new filename. DO NOT call this for normal operation.")
@@ -113,6 +136,12 @@ class FlexibleJavaScriptTool(
         @ToolParam(description = "Filename for the fixed protocol, e.g. 'fixed_rover.js'. Choose a descriptive name that indicates what was fixed.") filename: String,
         @ToolParam(description = "Complete protocol script in JavaScript. Must define 'protocol' object with pack* functions using Uint8Array or DataView for binary packing. Include the FULL script, not just the fixed function. Use readProtocol() first to see the current script. IMPORTANT: Use 'var' not 'const'/'let' (Rhino ES5 only).") content: String
     ): String {
+        val result = writeProtocolInternal(filename, content)
+        report("writeProtocol", if (result.startsWith("Error:")) "✗ $filename rejected" else "✓ Saved $filename", content)
+        return result
+    }
+
+    private fun writeProtocolInternal(filename: String, content: String): String {
         // Validate that the content looks like a protocol script
         if (!content.contains("protocol") || !content.contains("pack")) {
             return "Error: Content does not appear to be a valid protocol script. " +
