@@ -7,29 +7,27 @@
 Large Language Models excel at **language understanding and logical reasoning**, yet they remain fundamentally limited in **mathematical computation** and **physical interaction**. A capable AI agent needs three extensions:
 
 ```
-                        ┌─────────────────────────────────────────────┐
-                        │          AI Agent Capability Model           │
-                        └─────────────────────────────────────────────┘
+              ┌─────────────────────────────────────────────┐
+              │          AI Agent Capability Model          │
+              └─────────────────────────────────────────────┘
 
-  ┌──────────┐     ┌──────────────┐     ┌──────────────┐
-  │          │     │              │     │              │
-  │  Language │────▶│   Thinking   │◀───▶│ Computation  │
-  │  & Reason │     │  & Algorithm │     │  via Code    │
-  │          │     │              │     │  (Extension)  │
-  └──────────┘     └──────┬───────┘     └──────────────┘
-                          │                 JS generation
-                   ┌──────▼───────┐        + execution
-                   │              │        = verified math
-                   │   Physical   │
-                   │   Agency     │
-                   │              │
-                   └──────────────┘
-                       BLE
-                       + sensors
-                       = perceive
-                       & control
+ ┌──────────┐    ┌──────────────┐    ┌──────────────┐
+ │          │    │              │    │              │
+ │ Language │───▶│   Thinking   │◀──▶│ Computation  │
+ │ & Reason │    │ & Algorithm  │    │  via Code    │
+ │          │    │              │    │ (Extension)  │
+ └──────────┘    └──────┬───────┘    └──────▲───────┘
+                        │                   ║ observe result
+                 ┌──────▼───────┐           ║ rewrite driver
+                 │              │           ║ = self-iterate
+                 │   Physical   ├═══════════╝
+                 │   Agency     │
+                 │              │
+                 └──────────────┘
+                     BLE + sensors
+                     = perceive & control
 
-  ◀── Core LLM ──▶  ◀─ Center ─▶  ◀─ Extension ─▶  ◀── Physical ──▶
+ ◀─ Core LLM ─▶  ◀─ Center ─▶  ◀─ Extension ─▶  ◀── Physical ──▶
 ```
 
 The three extensions above give an agent hands and eyes. The fourth principle below — **self-iteration** — is what turns a tool-using agent into a robot that grows into its own body and environment.
