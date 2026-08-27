@@ -4,6 +4,9 @@ import android.util.Log
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.mozilla.javascript.Context
+import org.mozilla.javascript.ContextFactory
+import org.mozilla.javascript.EvaluatorException
 import org.mozilla.javascript.*
 import java.io.InputStreamReader
 import java.util.concurrent.Executors
@@ -25,6 +28,17 @@ class QuickJSSandbox(
     companion object {
         private const val TAG = "QuickJSSandbox"
         private const val MAX_SCRIPT_LENGTH = 8192
+        private const val SCRIPT_TIMEOUT_MS = 5_000L
+        private const val INSTRUCTION_CHECK_INTERVAL = 10_000
+
+        /**
+         * Abort a script when the JVM heap drops below this watermark.
+         * Rhino has no per-script memory quota, but the instruction observer fires
+         * regularly during interpreted execution — checking free heap there bounds
+         * allocation-heavy scripts (e.g. a loop pushing into an array) before they
+         * OOM the app, same abort path as the time budget.
+         */
+        private const val MIN_FREE_HEAP_BYTES = 32L * 1024 * 1024
     }
 
     /** Get the current active channel (may change between BLE/USB at runtime) */
@@ -42,6 +56,53 @@ class QuickJSSandbox(
     private fun <T> runOnJsThread(block: () -> T): T =
         runBlocking { withContext(jsDispatcher) { block() } }
 
+    /**
+     * Factory producing hardened Rhino contexts:
+     * - instruction observer aborts scripts running past SCRIPT_TIMEOUT_MS
+     *   (works because optimizationLevel = -1 forces the interpreter)
+     * - same observer aborts when free heap falls below MIN_FREE_HEAP_BYTES,
+     *   bounding allocation-heavy scripts that would otherwise OOM the app
+     * - ClassShutter denies ALL Java class access from JS; only injected host
+     *   objects (console, protocol, Uint8Array polyfill) are reachable
+     * scriptStartMs is written before each evaluation on the single JS thread.
+     */
+    private val jsContextFactory = object : ContextFactory() {
+        @Volatile
+        var scriptStartMs: Long = 0L
+
+        override fun makeContext(): Context =
+            object : Context() {
+                override fun observeInstructionCount(instructionCount: Int) {
+                    val startMs = scriptStartMs
+                    if (startMs == 0L) return
+                    val elapsedMs = System.currentTimeMillis() - startMs
+                    if (elapsedMs > SCRIPT_TIMEOUT_MS) {
+                        throw EvaluatorException(
+                            "Script execution timed out after ${elapsedMs}ms",
+                            "<sandbox>",
+                            0,
+                        )
+                    }
+                    // "How much can still be allocated before hitting maxMemory" —
+                    // unlike freeMemory(), this is not depressed right after GC or
+                    // before the heap commits more pages
+                    val runtime = Runtime.getRuntime()
+                    val allocatable = runtime.maxMemory() - (runtime.totalMemory() - runtime.freeMemory())
+                    if (allocatable < MIN_FREE_HEAP_BYTES) {
+                        throw EvaluatorException(
+                            "Script aborted: free heap low (${allocatable / (1024 * 1024)}MB)",
+                            "<sandbox>",
+                            0,
+                        )
+                    }
+                }
+            }.also { cx ->
+                cx.optimizationLevel = -1
+                cx.setInstructionObserverThreshold(INSTRUCTION_CHECK_INTERVAL)
+                cx.setClassShutter { false }
+            }
+    }
+
     // Rhino context and scope
     private var context: Context? = null
     private var scope: Scriptable? = null
@@ -56,7 +117,7 @@ class QuickJSSandbox(
 
     private fun initializeInternal(): Boolean {
         return try {
-            context = Context.enter()
+            context = jsContextFactory.enterContext()
             context?.optimizationLevel = -1 // -1 for Android compatibility
             scope = context?.initStandardObjects()
 
@@ -224,12 +285,14 @@ class QuickJSSandbox(
         }
 
         // Rhino Context is thread-local — must enter for current thread
-        val threadContext = Context.enter()
+        val threadContext = jsContextFactory.enterContext()
         threadContext.optimizationLevel = -1
 
         return try {
             // Execute the protocol JS to define the 'protocol' object
+            jsContextFactory.scriptStartMs = System.currentTimeMillis()
             threadContext.evaluateString(scope, script, filename, 1, null)
+            jsContextFactory.scriptStartMs = 0L
 
             // Get the protocol object from the scope
             val protocol = scope?.get("protocol", scope!!)
@@ -251,6 +314,7 @@ class QuickJSSandbox(
             Log.e(TAG, "Error loading protocol: ${e.message}", e)
             "Error: ${e.message}"
         } finally {
+            jsContextFactory.scriptStartMs = 0L
             Context.exit()
         }
     }
@@ -336,10 +400,11 @@ class QuickJSSandbox(
         }
 
         // Rhino Context is thread-local, so we need to enter a context for this thread
-        val threadContext = Context.enter()
+        val threadContext = jsContextFactory.enterContext()
         threadContext.optimizationLevel = -1  // -1 for Android compatibility
 
         return try {
+            jsContextFactory.scriptStartMs = System.currentTimeMillis()
             // Use the thread-local context to evaluate the script
             val result = threadContext.evaluateString(
                 scope,
@@ -348,6 +413,7 @@ class QuickJSSandbox(
                 1,
                 null
             )
+            jsContextFactory.scriptStartMs = 0L
 
             Log.i(TAG, "Execution OK — result type: ${result?.javaClass?.simpleName}")
             Log.d(TAG, "Result value: ${result.toString().take(200)}")
@@ -370,20 +436,34 @@ class QuickJSSandbox(
             Log.e(TAG, "Protocol object present: ${protocolObject != null}")
 
             "Error: ${e.message} (at ${e.sourceName}:${e.lineNumber})"
-        } catch (e: org.mozilla.javascript.EvaluatorException) {
-            Log.e(TAG, "=== executeScript END (EvaluatorException) ===")
-            Log.e(TAG, "Rhino EvaluatorException: ${e.message}")
-            Log.e(TAG, "Source: ${e.sourceName}:${e.lineNumber}:${e.columnNumber}")
-            Log.e(TAG, "Failed JS code: $javascriptCode")
+        } catch (e: EvaluatorException) {
+            jsContextFactory.scriptStartMs = 0L
+            val message = e.message ?: ""
+            if (message.startsWith("Script execution timed out")) {
+                Log.e(TAG, "=== executeScript END (TIMEOUT after ${SCRIPT_TIMEOUT_MS}ms budget) ===")
+                Log.e(TAG, "Timed-out JS code: $javascriptCode")
+                "Error: $message"
+            } else if (message.startsWith("Script aborted:")) {
+                Log.e(TAG, "=== executeScript END (MEMORY_LIMIT — free heap below ${MIN_FREE_HEAP_BYTES / (1024 * 1024)}MB) ===")
+                Log.e(TAG, "Aborted JS code: $javascriptCode")
+                "Error: $message"
+            } else {
+                Log.e(TAG, "=== executeScript END (EvaluatorException) ===")
+                Log.e(TAG, "Rhino EvaluatorException: ${e.message}")
+                Log.e(TAG, "Source: ${e.sourceName}:${e.lineNumber}:${e.columnNumber}")
+                Log.e(TAG, "Failed JS code: $javascriptCode")
 
-            "Error: Syntax error — ${e.message} (at ${e.sourceName}:${e.lineNumber})"
+                "Error: Syntax error — ${e.message} (at ${e.sourceName}:${e.lineNumber})"
+            }
         } catch (e: Exception) {
+            jsContextFactory.scriptStartMs = 0L
             Log.e(TAG, "=== executeScript END (Exception) ===")
             Log.e(TAG, "Execution failed: ${e.javaClass.simpleName} — ${e.message}", e)
             Log.e(TAG, "Failed JS code: $javascriptCode")
 
             "Error: ${e.javaClass.simpleName} — ${e.message}"
         } finally {
+            jsContextFactory.scriptStartMs = 0L
             // Always exit the context to avoid thread-local leaks
             Context.exit()
         }
