@@ -9,6 +9,7 @@ import com.phonerobot.app.robot.McuTelemetry
 data class PhoneRobotUiState(
     // Model status
     val modelStatus: ModelStatus = ModelStatus.Idle,
+    val modelLoadingElapsedSec: Int = 0,
 
     // Chat / AI conversation
     val messages: List<ChatMessage> = emptyList(),

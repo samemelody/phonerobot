@@ -134,7 +134,7 @@ fun MainScreen(
                 .padding(paddingValues)
                 .padding(horizontal = 16.dp)
         ) {
-            ModelStatusBar(state.modelStatus)
+            ModelStatusBar(state.modelStatus, state.modelLoadingElapsedSec)
 
             if (SHOW_USB_STATUS) {
                 Spacer(Modifier.height(8.dp))
@@ -242,7 +242,7 @@ private fun LoadingIndicator() {
 }
 
 @Composable
-private fun ModelStatusBar(status: ModelStatus) {
+private fun ModelStatusBar(status: ModelStatus, loadingElapsedSec: Int = 0) {
     val level = when (status) {
         ModelStatus.Ready -> StatusLevel.Success
         ModelStatus.Loading -> StatusLevel.Progress
@@ -251,7 +251,7 @@ private fun ModelStatusBar(status: ModelStatus) {
     }
     val text = when (status) {
         ModelStatus.Idle -> stringResource(R.string.model_status_idle)
-        ModelStatus.Loading -> stringResource(R.string.model_status_loading)
+        ModelStatus.Loading -> stringResource(R.string.model_status_loading, loadingElapsedSec)
         ModelStatus.Ready -> stringResource(R.string.model_status_ready)
         ModelStatus.Error -> stringResource(R.string.model_status_error)
     }

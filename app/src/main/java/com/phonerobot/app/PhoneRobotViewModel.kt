@@ -117,7 +117,14 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
         if (input.isBlank()) return
 
         if (!gemmaService.isReady) {
-            postAssistantMessage("Model is not ready yet. Please wait...")
+            val elapsed = _state.value.modelLoadingElapsedSec
+            postSystemMessage(
+                if (_state.value.modelStatus == ModelStatus.Loading && elapsed > 0) {
+                    "Model is still loading (${elapsed}s) — your message wasn't sent. Try again shortly."
+                } else {
+                    "Model is not ready yet — your message wasn't sent. Try again shortly."
+                }
+            )
             return
         }
 
@@ -199,7 +206,7 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun sendAudioToModel(audioFile: File) {
         if (!gemmaService.isReady) {
-            postAssistantMessage("Model is not ready yet. Please wait...")
+            postSystemMessage("Model is not ready yet — voice message wasn't sent. Try again shortly.")
             return
         }
 
@@ -242,7 +249,17 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun loadModel() {
         Log.i(TAG, "loadModel: starting model loading with tools")
-        _state.update { it.copy(modelStatus = ModelStatus.Loading) }
+        _state.update { it.copy(modelStatus = ModelStatus.Loading, modelLoadingElapsedSec = 0) }
+
+        // Elapsed-seconds ticker: LiteRT-LM's Engine.initialize() exposes no progress
+        // callback (verified against litertlm-android 0.16.1 API), so the honest
+        // feedback we can give is a live elapsed counter
+        val ticker = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(1_000)
+                _state.update { it.copy(modelLoadingElapsedSec = it.modelLoadingElapsedSec + 1) }
+            }
+        }
 
         viewModelScope.launch {
             try {
@@ -262,16 +279,19 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
                 if (success) {
                     Log.i(TAG, "loadModel: model loaded successfully")
+                    ticker.cancel()
                     _state.update { it.copy(modelStatus = ModelStatus.Ready) }
                     postSystemMessage("Gemma 4 ready! Tell me what robot you're controlling.")
                 } else {
                     Log.e(TAG, "loadModel: initialize() returned false")
+                    ticker.cancel()
                     _state.update { it.copy(modelStatus = ModelStatus.Error) }
                     postSystemMessage("Failed to load model — check that the .litertlm file is in the models folder.")
                     showSnackbar("Model failed to load", SnackAction.RetryModelLoad)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "loadModel: model loading failed", e)
+                ticker.cancel()
                 _state.update { it.copy(modelStatus = ModelStatus.Error) }
                 postSystemMessage("Failed to load model: ${e.message}")
                 showSnackbar("Model failed to load", SnackAction.RetryModelLoad)

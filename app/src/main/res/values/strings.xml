@@ -9,7 +9,7 @@
     <string name="main_title">PhoneRobot — AI Robot Controller</string>
     <string name="model_status_label">Model Status</string>
     <string name="model_status_idle">Model not loaded</string>
-    <string name="model_status_loading">Loading Gemma 4…</string>
+    <string name="model_status_loading">Loading Gemma 4… %1$ds</string>
     <string name="model_status_ready">Gemma 4 Ready</string>
     <string name="model_status_error">Model Error - check logs</string>
 
