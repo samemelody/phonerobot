@@ -19,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -38,6 +40,15 @@ class GemmaService(private val context: Context) {
 
     private var engine: Engine? = null
     private var conversation: Conversation? = null
+
+    /**
+     * Serializes all inference calls. The underlying Conversation is a single
+     * native session with no concurrency protection — overlapping sendMessage()
+     * calls (e.g. two voice messages sent in quick succession) interleave in the
+     * decoder and produce corrupted output ("I'I'm sorry...", garbage tokens).
+     * Observed in logcat 2026-08-27; this mutex makes the second caller wait.
+     */
+    private val inferenceMutex = Mutex()
 
     var isReady: Boolean = false
         private set
@@ -139,29 +150,30 @@ class GemmaService(private val context: Context) {
             val startMs = System.currentTimeMillis()
 
             try {
-                // Log user input
-                Log.i(TAG, "========== USER INPUT ==========")
-                Log.i(TAG, userPrompt)
-                Log.i(TAG, "========== END USER INPUT ==========")
+                inferenceMutex.withLock {
+                    // Log user input
+                    Log.i(TAG, "========== USER INPUT ==========")
+                    Log.i(TAG, userPrompt)
+                    Log.i(TAG, "========== END USER INPUT ==========")
 
-                val response: Message = conversation!!.sendMessage(userPrompt)
-                val outputText = extractText(response)
+                    val response: Message = conversation!!.sendMessage(userPrompt)
+                    val outputText = extractText(response)
 
-                val latency = System.currentTimeMillis() - startMs
-                val result = InferenceResult(
-                    text = outputText.trim(),
-                    tokenCount = estimateTokenCount(outputText),
-                    latencyMs = latency
-                )
+                    val latency = System.currentTimeMillis() - startMs
+                    val result = InferenceResult(
+                        text = outputText.trim(),
+                        tokenCount = estimateTokenCount(outputText),
+                        latencyMs = latency
+                    )
 
-                // Log AI output
-                Log.i(TAG, "========== AI OUTPUT ==========")
-                Log.i(TAG, result.text)
-                Log.i(TAG, "========== END AI OUTPUT ==========")
-                Log.d(TAG, "Inference done in ${latency}ms")
+                    // Log AI output
+                    Log.i(TAG, "========== AI OUTPUT ==========")
+                    Log.i(TAG, result.text)
+                    Log.i(TAG, "========== END AI OUTPUT ==========")
+                    Log.d(TAG, "Inference done in ${latency}ms")
 
-                result
-
+                    result
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Inference failed", e)
                 InferenceResult(
@@ -194,30 +206,31 @@ class GemmaService(private val context: Context) {
             val startMs = System.currentTimeMillis()
 
             try {
-                // Log audio input
-                Log.i(TAG, "========== USER AUDIO INPUT ==========")
-                Log.i(TAG, "Audio file: ${audioFile.absolutePath} (${audioFile.length()} bytes)")
-                Log.i(TAG, "========== END USER AUDIO INPUT ==========")
+                inferenceMutex.withLock {
+                    // Log audio input
+                    Log.i(TAG, "========== USER AUDIO INPUT ==========")
+                    Log.i(TAG, "Audio file: ${audioFile.absolutePath} (${audioFile.length()} bytes)")
+                    Log.i(TAG, "========== END USER AUDIO INPUT ==========")
 
-                val audioContent = Contents.of(Content.AudioFile(audioFile.absolutePath))
-                val response: Message = conversation!!.sendMessage(audioContent)
-                val outputText = extractText(response)
+                    val audioContent = Contents.of(Content.AudioFile(audioFile.absolutePath))
+                    val response: Message = conversation!!.sendMessage(audioContent)
+                    val outputText = extractText(response)
 
-                val latency = System.currentTimeMillis() - startMs
-                val result = InferenceResult(
-                    text = outputText.trim(),
-                    tokenCount = estimateTokenCount(outputText),
-                    latencyMs = latency
-                )
+                    val latency = System.currentTimeMillis() - startMs
+                    val result = InferenceResult(
+                        text = outputText.trim(),
+                        tokenCount = estimateTokenCount(outputText),
+                        latencyMs = latency
+                    )
 
-                // Log AI output
-                Log.i(TAG, "========== AI OUTPUT (from audio) ==========")
-                Log.i(TAG, result.text)
-                Log.i(TAG, "========== END AI OUTPUT ==========")
-                Log.d(TAG, "Audio inference done in ${latency}ms")
+                    // Log AI output
+                    Log.i(TAG, "========== AI OUTPUT (from audio) ==========")
+                    Log.i(TAG, result.text)
+                    Log.i(TAG, "========== END AI OUTPUT ==========")
+                    Log.d(TAG, "Audio inference done in ${latency}ms")
 
-                result
-
+                    result
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Audio inference failed", e)
                 InferenceResult(
