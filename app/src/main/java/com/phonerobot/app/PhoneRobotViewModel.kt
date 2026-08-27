@@ -20,9 +20,7 @@ import com.phonerobot.app.ui.ModelStatus
 import com.phonerobot.app.ui.PhoneRobotUiState
 import com.phonerobot.app.ui.SnackAction
 import com.phonerobot.app.ui.UiEffect
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -38,6 +36,9 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
     companion object {
         private const val TAG = "PhoneRobotVM"
+
+        /** Chat history is trimmed to the newest N messages so long sessions don't grow memory and recomposition cost forever. */
+        private const val MAX_CHAT_MESSAGES = 200
     }
 
     private val gemmaService get() = getApplication<PhoneRobotApplication>().gemmaService
@@ -66,7 +67,7 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
     val connection: ConnectionManager = ConnectionManager(
         context = getApplication(),
-        scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+        scope = viewModelScope,
         postEvent = ::postSystemMessage,
     )
 
@@ -280,29 +281,27 @@ class PhoneRobotViewModel(application: Application) : AndroidViewModel(applicati
 
     // ── Messaging helpers ────────────────────────────────────────
 
+    private fun appendMessage(message: ChatMessage) {
+        _state.update {
+            it.copy(messages = (it.messages + message).takeLast(MAX_CHAT_MESSAGES))
+        }
+    }
+
     fun postSystemMessage(text: String) {
-        _state.update { it.copy(messages = it.messages + ChatMessage(ChatMessage.Role.SYSTEM, text)) }
+        appendMessage(ChatMessage(ChatMessage.Role.SYSTEM, text))
     }
 
     private fun postUserMessage(text: String) {
-        _state.update { it.copy(messages = it.messages + ChatMessage(ChatMessage.Role.USER, text)) }
+        appendMessage(ChatMessage(ChatMessage.Role.USER, text))
     }
 
     private fun postAssistantMessage(text: String) {
-        _state.update { it.copy(messages = it.messages + ChatMessage(ChatMessage.Role.ASSISTANT, text)) }
+        appendMessage(ChatMessage(ChatMessage.Role.ASSISTANT, text))
     }
 
     private fun postToolMessage(toolName: String, summary: String, body: String) {
         val content = if (body.isBlank()) summary else "$summary\n\n$body"
-        _state.update {
-            it.copy(
-                messages = it.messages + ChatMessage(
-                    ChatMessage.Role.TOOL,
-                    content,
-                    toolName = toolName
-                )
-            )
-        }
+        appendMessage(ChatMessage(ChatMessage.Role.TOOL, content, toolName = toolName))
     }
 
     // ── Teardown ─────────────────────────────────────────────────
