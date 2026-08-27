@@ -10,7 +10,7 @@
         android:id="@+id/title_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Robot Mode"
+        android:text="@string/robot_mode_title"
         android:textSize="32sp"
         android:textStyle="bold"
         android:layout_marginBottom="32dp" />
@@ -19,7 +19,7 @@
         android:id="@+id/status_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Ready"
+        android:text="@string/robot_mode_status_ready"
         android:textSize="18sp"
         android:layout_marginBottom="16dp" />
 
@@ -27,7 +27,7 @@
         android:id="@+id/start_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Start"
+        android:text="@string/robot_mode_btn_start"
         android:layout_marginBottom="32dp" />
 
     <TextView

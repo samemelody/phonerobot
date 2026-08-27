@@ -5,16 +5,16 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresPermission
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.phonerobot.app.ai.GemmaService
 import com.phonerobot.app.audio.VoiceActivityDetector
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import java.io.File
 import java.io.FileOutputStream
 
@@ -26,10 +26,21 @@ class RobotModeActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "RobotModeActivity"
-        private const val REQUEST_RECORD_AUDIO = 1001
         private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+    }
+
+    private val requestAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            Log.i(TAG, "Audio permission granted")
+            startRobotMode()
+        } else {
+            Log.e(TAG, "Audio permission denied")
+            updateStatus(getString(R.string.robot_mode_permission_denied))
+        }
     }
 
     // Get GemmaService from Application (singleton - model loaded only once)
@@ -45,6 +56,11 @@ class RobotModeActivity : ComponentActivity() {
     // Recording buffer (accumulates audio during speech)
     private var recordingBuffer = mutableListOf<Byte>()
     private var isRecordingSpeech = false
+
+    // Speech segments queued for AI processing. Decouples the VAD read loop from
+    // inference (which takes seconds) so audio keeps flowing while the model thinks;
+    // the consumer also serializes inference calls (single engine, no concurrency).
+    private val pendingAudio = Channel<File>(Channel.UNLIMITED)
 
     // UI elements
     private lateinit var statusText: android.widget.TextView
@@ -77,18 +93,29 @@ class RobotModeActivity : ComponentActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            updateStatus("Permission required")
+            updateStatus(getString(R.string.robot_mode_permission_required))
             return
         }
 
         if (!gemmaService.isReady) {
-            updateStatus("AI model not ready")
+            updateStatus(getString(R.string.robot_mode_model_not_ready))
             return
         }
 
         isActive = true
-        updateStatus("Listening...")
-        startButton.text = "Stop"
+        updateStatus(getString(R.string.robot_mode_listening))
+        startButton.text = getString(R.string.robot_mode_btn_stop)
+
+        // Sequential consumer: processes queued speech segments one at a time
+        scope.launch(Dispatchers.IO) {
+            for (audioFile in pendingAudio) {
+                processAudioWithAI(audioFile)
+                audioFile.delete()
+                withContext(Dispatchers.Main) {
+                    updateStatus(getString(R.string.robot_mode_listening))
+                }
+            }
+        }
 
         scope.launch(Dispatchers.IO) {
             startVadRecording()
@@ -105,8 +132,8 @@ class RobotModeActivity : ComponentActivity() {
             Log.e(TAG, "Error stopping AudioRecord", e)
         }
         audioRecord = null
-        updateStatus("Stopped")
-        startButton.text = "Start"
+        updateStatus(getString(R.string.robot_mode_stopped))
+        startButton.text = getString(R.string.robot_mode_btn_start)
     }
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
@@ -137,7 +164,7 @@ class RobotModeActivity : ComponentActivity() {
             val buffer = ByteArray(bufferSize)
             recordingBuffer.clear()
 
-            while (isActive && isActive) {
+            while (isActive) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: break
                 if (read > 0) {
                     val isSpeech = vad.processAudio(buffer.copyOfRange(0, read))
@@ -148,30 +175,32 @@ class RobotModeActivity : ComponentActivity() {
                         recordingBuffer.clear()
                         recordingBuffer.addAll(buffer.copyOfRange(0, read).toList())
                         withContext(Dispatchers.Main) {
-                            updateStatus("Recording speech...")
+                            updateStatus(getString(R.string.robot_mode_recording_speech))
                         }
                     } else if (isSpeech && isRecordingSpeech) {
                         // Continuing speech → keep buffering
                         recordingBuffer.addAll(buffer.copyOfRange(0, read).toList())
                     } else if (!isSpeech && isRecordingSpeech) {
-                        // Speech ended → save to WAV and send to AI
+                        // Speech ended -> save to WAV and queue for AI processing
                         isRecordingSpeech = false
                         val audioFile = saveBufferToWav(recordingBuffer)
                         recordingBuffer.clear()
 
                         withContext(Dispatchers.Main) {
                             if (audioFile != null) {
-                                lastCommandText.text = "Speech: ${audioFile.name} (${audioFile.length()} bytes)"
-                                updateStatus("Processing with AI...")
+                                lastCommandText.text = getString(
+                                    R.string.robot_mode_speech_file,
+                                    audioFile.name,
+                                    audioFile.length()
+                                )
+                                updateStatus(getString(R.string.robot_mode_processing))
                             }
                         }
 
                         if (audioFile != null) {
-                            processAudioWithAI(audioFile)
-                        }
-
-                        withContext(Dispatchers.Main) {
-                            updateStatus("Listening...")
+                            // Handed off to the processing queue instead of awaited,
+                            // so this read loop keeps consuming audio during inference
+                            pendingAudio.trySend(audioFile)
                         }
                     }
                 }
@@ -179,7 +208,7 @@ class RobotModeActivity : ComponentActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error in VAD recording", e)
             withContext(Dispatchers.Main) {
-                updateStatus("Error: ${e.message}")
+                updateStatus(getString(R.string.robot_mode_error, e.message ?: ""))
             }
         } finally {
             try {
@@ -269,7 +298,7 @@ class RobotModeActivity : ComponentActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error processing audio with AI", e)
             withContext(Dispatchers.Main) {
-                aiResponseText.text = "Error: ${e.message}"
+                aiResponseText.text = getString(R.string.robot_mode_error, e.message ?: "")
             }
         }
     }
@@ -281,33 +310,10 @@ class RobotModeActivity : ComponentActivity() {
     }
 
     private fun checkPermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-                ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf(Manifest.permission.RECORD_AUDIO),
-                    REQUEST_RECORD_AUDIO
-                )
-            }
-        }
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_RECORD_AUDIO) {
-            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                Log.i(TAG, "Audio permission granted")
-                startRobotMode()
-            } else {
-                Log.e(TAG, "Audio permission denied")
-                updateStatus("Permission denied")
-            }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
 

@@ -65,6 +65,18 @@
     <string name="robot_mode_title">Robot Mode</string>
     <string name="robot_mode_start_hint">Tap to start continuous listening</string>
     <string name="robot_mode_description">Robot Mode: Continuous listening for voice commands.\nAI processes speech and controls robot.</string>
+    <string name="robot_mode_status_ready">Ready</string>
+    <string name="robot_mode_btn_start">Start</string>
+    <string name="robot_mode_btn_stop">Stop</string>
+    <string name="robot_mode_listening">Listening…</string>
+    <string name="robot_mode_recording_speech">Recording speech…</string>
+    <string name="robot_mode_processing">Processing with AI…</string>
+    <string name="robot_mode_stopped">Stopped</string>
+    <string name="robot_mode_permission_required">Permission required</string>
+    <string name="robot_mode_permission_denied">Permission denied</string>
+    <string name="robot_mode_model_not_ready">AI model not ready</string>
+    <string name="robot_mode_speech_file">Speech: %1$s (%2$d bytes)</string>
+    <string name="robot_mode_error">Error: %1$s</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
