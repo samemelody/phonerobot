@@ -50,6 +50,12 @@ android {
         compose = true
     }
 
+    testOptions {
+        // Pure-JVM unit tests hit android.util.Log in production code (CommandParser);
+        // stub the framework classes instead of failing with "not mocked"
+        unitTests.isReturnDefaultValues = true
+    }
+
     // Allow large model files in assets (Gemma 4 weights can be 1GB+)
     androidResources {
         noCompress += listOf("tflite", "litert", "litertlm", "bin", "json")
