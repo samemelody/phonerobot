@@ -83,7 +83,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.phonerobot.app.R
 import com.phonerobot.app.ai.ChatMessage
-import com.phonerobot.app.RobotModeActivity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -113,6 +112,7 @@ fun MainScreen(
     onInputChanged: (String) -> Unit,
     onSendClicked: () -> Unit,
     onVoiceClicked: () -> Unit,
+    onRobotMicClicked: () -> Unit = {},
     onConnectUsb: () -> Unit = {},
     onScanBle: () -> Unit = {},
     onConnectBle: (String) -> Unit = {},
@@ -171,6 +171,11 @@ fun MainScreen(
                 }
                 PhoneRobotDestination.ROBOT_MODE -> {
                     RobotModePanel(
+                        isRunning = state.robotModeRunning,
+                        status = state.robotModeStatus,
+                        lastSpeech = state.lastSpeech,
+                        lastAiReply = state.messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }?.content,
+                        onMicClicked = onRobotMicClicked,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -487,11 +492,21 @@ private fun ChatPanel(
 
 // ==================== Robot Mode Panel ====================
 
+/**
+ * Robot Mode panel (C6c): the mic toggles continuous listening in place —
+ * no separate activity. AI responses land in the chat history, so switching
+ * back to the Chat tab shows the full voice-command conversation.
+ */
 @Composable
 private fun RobotModePanel(
+    isRunning: Boolean,
+    status: RobotModeStatus,
+    lastSpeech: SpeechSegment?,
+    lastAiReply: String?,
+    onMicClicked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val scheme = MaterialTheme.colorScheme
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -507,26 +522,32 @@ private fun RobotModePanel(
             Text(
                 text = stringResource(R.string.robot_mode_title),
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.primary
+                color = scheme.primary
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                text = robotModeStatusText(status),
+                style = MaterialTheme.typography.titleMedium,
+                color = if (status is RobotModeStatus.Error) scheme.error else scheme.onSurface
             )
 
             Spacer(Modifier.height(32.dp))
 
             IconButton(
-                onClick = {
-                    context.startActivity(
-                        android.content.Intent(context, RobotModeActivity::class.java)
-                    )
-                },
+                onClick = onMicClicked,
                 modifier = Modifier
                     .size(80.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    .background(if (isRunning) scheme.error else scheme.primary, CircleShape)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Mic,
-                    contentDescription = stringResource(R.string.cd_start_robot_mode),
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                    imageVector = if (isRunning) Icons.Default.Stop else Icons.Default.Mic,
+                    contentDescription = stringResource(
+                        if (isRunning) R.string.cd_stop_robot_mode else R.string.cd_start_robot_mode
+                    ),
+                    tint = scheme.onPrimary,
                     modifier = Modifier.size(40.dp)
                 )
             }
@@ -534,21 +555,58 @@ private fun RobotModePanel(
             Spacer(Modifier.height(16.dp))
 
             Text(
-                text = stringResource(R.string.robot_mode_start_hint),
+                text = stringResource(
+                    if (isRunning) R.string.robot_mode_stop_hint else R.string.robot_mode_start_hint
+                ),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = scheme.onSurfaceVariant
             )
+
+            lastSpeech?.let { speech ->
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = stringResource(
+                        R.string.robot_mode_speech_file, speech.fileName, speech.bytes
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+
+            lastAiReply?.let { reply ->
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = "AI: $reply",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurface,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
 
             Text(
                 text = stringResource(R.string.robot_mode_description),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
         }
     }
+}
+
+@Composable
+private fun robotModeStatusText(status: RobotModeStatus): String = when (status) {
+    RobotModeStatus.Ready -> stringResource(R.string.robot_mode_status_ready)
+    RobotModeStatus.Listening -> stringResource(R.string.robot_mode_listening)
+    RobotModeStatus.RecordingSpeech -> stringResource(R.string.robot_mode_recording_speech)
+    RobotModeStatus.Processing -> stringResource(R.string.robot_mode_processing)
+    RobotModeStatus.Stopped -> stringResource(R.string.robot_mode_stopped)
+    RobotModeStatus.ModelNotReady -> stringResource(R.string.robot_mode_model_not_ready)
+    RobotModeStatus.PermissionRequired -> stringResource(R.string.robot_mode_permission_required)
+    RobotModeStatus.PermissionDenied -> stringResource(R.string.robot_mode_permission_denied)
+    is RobotModeStatus.Error -> stringResource(R.string.robot_mode_error, status.message)
 }
 
 // ==================== Chat Bubble ====================

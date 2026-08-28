@@ -49,11 +49,6 @@
                 android:resource="@xml/usb_device_filter" />
         </activity>
 
-        <activity
-            android:name=".RobotModeActivity"
-            android:exported="false"
-            android:theme="@style/Theme.PhoneRobot" />
-
     </application>
 
 </manifest>

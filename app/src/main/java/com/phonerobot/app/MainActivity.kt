@@ -44,10 +44,10 @@ class MainActivity : ComponentActivity() {
     ) { isGranted: Boolean ->
         if (isGranted) {
             Log.i(TAG, "RECORD_AUDIO permission granted")
-            viewModel.startRecording()
+            viewModel.onAudioPermissionGranted()
         } else {
             Log.w(TAG, "RECORD_AUDIO permission denied")
-            viewModel.postSystemMessage("Microphone permission is required for voice input.")
+            viewModel.onAudioPermissionDenied()
         }
     }
 
@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
                         onInputChanged = viewModel::setInput,
                         onSendClicked = viewModel::sendMessage,
                         onVoiceClicked = ::onVoiceClicked,
+                        onRobotMicClicked = ::onRobotMicClicked,
                         onConnectUsb = viewModel::connectUsbDevice,
                         onScanBle = ::prepareBleScan,
                         onConnectBle = viewModel::connectBle,
@@ -137,14 +138,31 @@ class MainActivity : ComponentActivity() {
             viewModel.stopRecordingAndSend()
             return
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
+        if (hasAudioPermission()) {
             viewModel.startRecording()
         } else {
+            viewModel.onAudioPermissionRequested(PhoneRobotViewModel.MicRequest.ChatRecording)
             requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
     }
+
+    /** Robot Mode mic (ROBOT tab): toggles continuous listening in place. */
+    private fun onRobotMicClicked() {
+        if (viewModel.uiState.value.robotModeRunning) {
+            viewModel.stopRobotMode()
+            return
+        }
+        if (hasAudioPermission()) {
+            viewModel.startRobotMode()
+        } else {
+            viewModel.onAudioPermissionRequested(PhoneRobotViewModel.MicRequest.RobotMode)
+            requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
 
     // ── BLE scan: BT / location / permission gates ───────────────
 

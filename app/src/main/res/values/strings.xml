@@ -39,6 +39,7 @@
     <string name="cd_usb">USB connection status</string>
     <string name="cd_ble">Bluetooth connection status</string>
     <string name="cd_start_robot_mode">Start Robot Mode</string>
+    <string name="cd_stop_robot_mode">Stop Robot Mode</string>
 
     <string name="input_hint">Say something…</string>
     <string name="send_button">Send</string>
@@ -64,10 +65,9 @@
     <!-- Robot mode -->
     <string name="robot_mode_title">Robot Mode</string>
     <string name="robot_mode_start_hint">Tap to start continuous listening</string>
+    <string name="robot_mode_stop_hint">Listening — tap to stop</string>
     <string name="robot_mode_description">Robot Mode: Continuous listening for voice commands.\nAI processes speech and controls robot.</string>
     <string name="robot_mode_status_ready">Ready</string>
-    <string name="robot_mode_btn_start">Start</string>
-    <string name="robot_mode_btn_stop">Stop</string>
     <string name="robot_mode_listening">Listening…</string>
     <string name="robot_mode_recording_speech">Recording speech…</string>
     <string name="robot_mode_processing">Processing with AI…</string>
