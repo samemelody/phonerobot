@@ -3,6 +3,8 @@ package com.phonerobot.app
 import android.app.Application
 import android.util.Log
 import com.phonerobot.app.ai.GemmaService
+import com.phonerobot.app.crash.CrashReporter
+import java.io.File
 
 /**
  * Application class for PhoneRobot.
@@ -16,12 +18,24 @@ class PhoneRobotApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        crashReporter = CrashReporter(File(filesDir, "crash"), appVersion = versionName).also {
+            it.install()
+        }
         Log.d(TAG, "PhoneRobot app initialized")
     }
+
+    private val versionName: String
+        get() = try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+        } catch (_: Exception) {
+            "?"
+        }
 
     companion object {
         private const val TAG = "PhoneRobotApp"
         lateinit var instance: PhoneRobotApplication
+            private set
+        lateinit var crashReporter: CrashReporter
             private set
     }
 }
